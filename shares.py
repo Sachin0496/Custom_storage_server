@@ -1,9 +1,9 @@
 import json
 import uuid
+import shutil
 from datetime import datetime
 from pathlib import Path
 import os
-import stat
 
 SHARES_FILE = Path("shares.json")
 
@@ -54,18 +54,31 @@ def list_shares() -> list:
 
 def _safe_resolve(share_path: str, subpath: str) -> Path | None:
     root = Path(share_path).resolve()
-    
-    # Strip leading slashes to prevent absolute path injection via subpath
     subpath = subpath.lstrip("/\\")
     
     target = (root / subpath).resolve()
     
-    # Check if target is still within root
     try:
         target.relative_to(root)
         return target
     except ValueError:
-        return None  # Path escaped the root directory
+        return None  
+
+
+def _safe_resolve_new_item(share_path: str, subpath: str, name: str) -> Path | None:
+    root = Path(share_path).resolve()
+    subpath = subpath.lstrip("/\\")
+    
+    parent = (root / subpath).resolve()
+    try:
+        parent.relative_to(root)
+    except ValueError:
+        return None
+        
+    if not parent.exists() or not parent.is_dir():
+        return None
+        
+    return parent / name
 
 
 def list_share_dir(share_id: str, subpath: str = "") -> list | None:
@@ -81,10 +94,8 @@ def list_share_dir(share_id: str, subpath: str = "") -> list | None:
     items = []
     try:
         for p in target.iterdir():
-            # Skip hidden files and symlinks that might break out
             if p.name.startswith("."):
                 continue
-            
             try:
                 st = p.stat()
                 is_dir = p.is_dir()
@@ -97,9 +108,8 @@ def list_share_dir(share_id: str, subpath: str = "") -> list | None:
             except (OSError, ValueError):
                 pass
     except OSError:
-        return None # Permission denied etc.
+        return None 
     
-    # Sort folders first, then files
     items.sort(key=lambda x: (x["type"] != "dir", x["name"].lower()))
     return items
 
@@ -108,7 +118,6 @@ def get_share_file(share_id: str, subpath: str) -> tuple[Path, str] | None:
     shares = _load()
     if share_id not in shares:
         return None
-
     share = shares[share_id]
     target = _safe_resolve(share["path"], subpath)
     
@@ -116,3 +125,68 @@ def get_share_file(share_id: str, subpath: str) -> tuple[Path, str] | None:
         return None
 
     return target, target.name
+
+
+def create_share_dir(share_id: str, parent_subpath: str, new_dir_name: str) -> bool | str:
+    """Returns True if created, string error message if failed."""
+    shares = _load()
+    if share_id not in shares:
+        return "Share not found"
+        
+    target = _safe_resolve_new_item(shares[share_id]["path"], parent_subpath, new_dir_name)
+    if not target:
+        return "Invalid path"
+        
+    if target.exists():
+        return "Directory already exists"
+        
+    try:
+        target.mkdir()
+        return True
+    except OSError as e:
+        return str(e)
+
+
+def delete_share_item(share_id: str, subpath: str) -> bool | str:
+    """Returns True if deleted, string error message if failed."""
+    shares = _load()
+    if share_id not in shares:
+        return "Share not found"
+        
+    target = _safe_resolve(shares[share_id]["path"], subpath)
+    if not target or not target.exists():
+        return "Item not found or invalid path"
+        
+    # Prevent deleting the root share itself!
+    if target == Path(shares[share_id]["path"]).resolve():
+        return "Cannot delete the root mapped drive directory"
+        
+    try:
+        if target.is_dir():
+            shutil.rmtree(target)
+        else:
+            target.unlink()
+        return True
+    except OSError as e:
+        return str(e)
+
+
+def upload_share_file(share_id: str, parent_subpath: str, file_obj, filename: str, overwrite: bool) -> bool | str:
+    """Returns True if uploaded, string error message if failed."""
+    shares = _load()
+    if share_id not in shares:
+        return "Share not found"
+        
+    target = _safe_resolve_new_item(shares[share_id]["path"], parent_subpath, filename)
+    if not target:
+        return "Invalid path"
+        
+    if target.exists() and not overwrite:
+        return "FILE_EXISTS"
+        
+    try:
+        with open(target, "wb") as out:
+            shutil.copyfileobj(file_obj.file, out)
+        return True
+    except OSError as e:
+        return str(e)

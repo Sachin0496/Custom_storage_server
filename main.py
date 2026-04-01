@@ -220,6 +220,45 @@ def download_share_file(share_id: str, path: str, user: dict = Depends(_require_
     )
 
 
+@app.post("/api/shares/{share_id}/mkdir")
+def create_share_folder(share_id: str, path: str, name: str, user: dict = Depends(_require_user)):
+    if not user["permissions"].get("upload"):
+        raise HTTPException(status_code=403, detail="No upload permission")
+    result = shares.create_share_dir(share_id, path, name)
+    if result is not True:
+        raise HTTPException(status_code=400, detail=result)
+    return {"ok": True}
+
+
+@app.delete("/api/shares/{share_id}/item")
+def delete_share_item(share_id: str, path: str, user: dict = Depends(_require_user)):
+    if not user["permissions"].get("delete") and user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="No delete permission")
+    result = shares.delete_share_item(share_id, path)
+    if result is not True:
+        raise HTTPException(status_code=400, detail=result)
+    return {"ok": True}
+
+
+@app.post("/api/shares/{share_id}/upload")
+async def upload_share_file(
+    share_id: str, 
+    path: str, 
+    overwrite: bool = False,
+    file: UploadFile = File(...), 
+    user: dict = Depends(_require_user)
+):
+    if not user["permissions"].get("upload"):
+        raise HTTPException(status_code=403, detail="No upload permission")
+    
+    result = shares.upload_share_file(share_id, path, file, file.filename, overwrite)
+    if result == "FILE_EXISTS":
+        raise HTTPException(status_code=409, detail="File already exists")
+    elif result is not True:
+        raise HTTPException(status_code=400, detail=result)
+    return {"ok": True}
+
+
 # ── Admin routes ───────────────────────────────────────────────────────────────
 @app.get("/api/admin/users")
 def admin_list_users(admin: dict = Depends(_require_admin)):

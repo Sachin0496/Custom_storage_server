@@ -380,6 +380,11 @@
     <div class="card">
       <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
         <div style="font-size:16px;font-weight:600;flex:1" id="shares-title">Shared Drives</div>
+        <div id="shares-actions" style="display:none; gap:8px;">
+           <button class="btn btn-primary btn-sm" onclick="promptCreateShareDir()">+ Folder</button>
+           <button class="btn btn-primary btn-sm" onclick="document.getElementById('share-file-input').click()">↑ Upload</button>
+           <input type="file" id="share-file-input" style="display:none" multiple onchange="uploadShareFile(this.files)" />
+        </div>
         <button class="btn btn-ghost btn-sm" onclick="loadSharesView()">↻ Refresh</button>
       </div>
       
@@ -827,6 +832,7 @@ async function loadSharesView() {
   if (!CURRENT_SHARE_ID) {
     // Load list of shares
     $('shares-breadcrumb').style.display = 'none';
+    $('shares-actions').style.display = 'none';
     $('shares-title').textContent = 'Shared Drives';
     try {
       ALL_SHARES = await apiFetch('/api/shares');
@@ -834,6 +840,7 @@ async function loadSharesView() {
     } catch(e) { toast(e.message, 'error'); }
   } else {
     // Load directory
+    $('shares-actions').style.display = (SESSION?.permissions?.upload || SESSION?.role === 'admin') ? 'flex' : 'none';
     try {
       const items = await apiFetch(`/api/shares/${CURRENT_SHARE_ID}/browse?path=${encodeURIComponent(CURRENT_SHARE_PATH)}`);
       renderShareDir(items);
@@ -936,6 +943,58 @@ function downloadShareFile(shareId, subpath, name) {
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   }).catch(e => toast('Download failed: ' + e.message, 'error'));
+}
+
+async function promptCreateShareDir() {
+  const name = prompt("Folder name:");
+  if (!name) return;
+  try {
+    await apiFetch(`/api/shares/${CURRENT_SHARE_ID}/mkdir?path=${encodeURIComponent(CURRENT_SHARE_PATH)}&name=${encodeURIComponent(name)}`, { method: 'POST' });
+    toast("Folder created");
+    loadSharesView();
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+async function deleteShareItem(shareId, subpath) {
+  if (window.event) window.event.stopPropagation();
+  if (!confirm("Delete this item?")) return;
+  try {
+    await apiFetch(`/api/shares/${shareId}/item?path=${encodeURIComponent(subpath)}`, { method: 'DELETE' });
+    toast("Item deleted");
+    loadSharesView();
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+async function uploadShareFile(files, overwrite=false) {
+  if (!files.length) return;
+  for (let i = 0; i < files.length; i++) {
+    const f = files[i];
+    try {
+      const fd = new FormData();
+      fd.append('file', f);
+      const res = await fetch(`${API}/api/shares/${CURRENT_SHARE_ID}/upload?path=${encodeURIComponent(CURRENT_SHARE_PATH)}&overwrite=${overwrite}`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${SESSION.bearer}` },
+        body: fd,
+      });
+      if (!res.ok) {
+        if (res.status === 409) {
+          if (confirm(`File "${f.name}" already exists. Replace it?`)) {
+            await uploadShareFile([f], true);
+            continue;
+          } else {
+            continue;
+          }
+        }
+        const e = await res.json().catch(()=>({}));
+        toast(`Upload failed: ${e.detail || 'Unknown error'}`, 'error');
+        continue;
+      }
+      toast(`Uploaded ${f.name}`);
+    } catch(e) { toast(e.message, 'error'); }
+  }
+  $('share-file-input').value = '';
+  loadSharesView();
 }
 
 async function loadAdminShares() {
