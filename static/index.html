@@ -1,0 +1,991 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>LAN Store</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --bg: #0d0f14;
+    --surface: #161b25;
+    --surface2: #1e2535;
+    --border: #2a3245;
+    --accent: #5b8def;
+    --accent2: #7c6af7;
+    --success: #3ecf8e;
+    --danger: #f46f6f;
+    --warn: #f5a623;
+    --text: #e8ecf4;
+    --muted: #6b7898;
+    --radius: 12px;
+    --transition: 0.18s ease;
+  }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; font-family: 'Inter', sans-serif; background: var(--bg); color: var(--text); }
+
+  /* ── Scrollbar ── */
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: var(--bg); }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+  /* ── Layout ── */
+  #app { min-height: 100vh; display: flex; flex-direction: column; }
+
+  /* ── Nav ── */
+  nav {
+    position: sticky; top: 0; z-index: 100;
+    display: flex; align-items: center; gap: 12px;
+    padding: 0 24px; height: 60px;
+    background: rgba(13,15,20,0.85); backdrop-filter: blur(16px);
+    border-bottom: 1px solid var(--border);
+  }
+  .nav-logo { font-size: 18px; font-weight: 700; background: linear-gradient(135deg, var(--accent), var(--accent2)); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+  .nav-spacer { flex: 1; }
+  .nav-btn {
+    padding: 7px 18px; border-radius: 8px; font-size: 13px; font-weight: 500;
+    border: 1px solid var(--border); background: transparent; color: var(--muted);
+    cursor: pointer; transition: var(--transition);
+  }
+  .nav-btn:hover, .nav-btn.active { background: var(--surface2); color: var(--text); border-color: var(--accent); }
+  .nav-btn.active { color: var(--accent); }
+  .nav-user { font-size: 13px; color: var(--muted); }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 20px; font-size: 11px; font-weight: 600; }
+  .badge-admin { background: rgba(91,141,239,0.15); color: var(--accent); border: 1px solid rgba(91,141,239,0.3); }
+  .badge-user  { background: rgba(107,120,152,0.15); color: var(--muted); border: 1px solid var(--border); }
+
+  /* ── Page ── */
+  .page { display: none; flex: 1; padding: 40px 24px; max-width: 960px; margin: 0 auto; width: 100%; }
+  .page.active { display: block; }
+
+  /* ── Cards ── */
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 28px; margin-bottom: 20px; }
+  .card-title { font-size: 20px; font-weight: 600; margin-bottom: 6px; }
+  .card-sub { font-size: 14px; color: var(--muted); margin-bottom: 24px; }
+
+  /* ── Form ── */
+  .form-group { margin-bottom: 16px; }
+  label { display: block; font-size: 13px; font-weight: 500; color: var(--muted); margin-bottom: 6px; }
+  input[type=text], input[type=password] {
+    width: 100%; padding: 11px 14px; border-radius: 8px;
+    border: 1px solid var(--border); background: var(--surface2);
+    color: var(--text); font-size: 14px; font-family: inherit;
+    outline: none; transition: var(--transition);
+  }
+  input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(91,141,239,0.12); }
+
+  /* ── Buttons ── */
+  .btn {
+    display: inline-flex; align-items: center; gap: 7px;
+    padding: 10px 22px; border-radius: 8px; font-size: 14px; font-weight: 600;
+    border: none; cursor: pointer; transition: var(--transition); white-space: nowrap;
+  }
+  .btn-primary { background: linear-gradient(135deg, var(--accent), var(--accent2)); color: #fff; }
+  .btn-primary:hover { opacity: 0.88; transform: translateY(-1px); }
+  .btn-ghost { background: transparent; color: var(--muted); border: 1px solid var(--border); }
+  .btn-ghost:hover { background: var(--surface2); color: var(--text); }
+  .btn-danger { background: transparent; color: var(--danger); border: 1px solid rgba(244,111,111,0.35); }
+  .btn-danger:hover { background: rgba(244,111,111,0.1); }
+  .btn-success { background: var(--success); color: #0d0f14; }
+  .btn-sm { padding: 6px 14px; font-size: 12px; }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none !important; }
+
+  /* ── Alerts ── */
+  .alert { padding: 12px 16px; border-radius: 8px; font-size: 13px; margin-bottom: 14px; display: none; }
+  .alert.show { display: block; }
+  .alert-error   { background: rgba(244,111,111,0.12); border: 1px solid rgba(244,111,111,0.3); color: var(--danger); }
+  .alert-success { background: rgba(62,207,142,0.12); border: 1px solid rgba(62,207,142,0.3);  color: var(--success); }
+  .alert-info    { background: rgba(91,141,239,0.12);  border: 1px solid rgba(91,141,239,0.3);  color: var(--accent); }
+
+  /* ── Token box ── */
+  .token-box {
+    background: var(--surface2); border: 1px solid var(--border); border-radius: 8px;
+    padding: 12px 14px; font-family: monospace; font-size: 12px;
+    word-break: break-all; color: var(--accent); margin: 12px 0;
+  }
+
+  /* ── Wizard steps ── */
+  .wizard-step { display: none; }
+  .wizard-step.active { display: block; }
+  .step-indicator { display: flex; gap: 8px; margin-bottom: 28px; }
+  .step-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--border); transition: var(--transition); }
+  .step-dot.active { background: var(--accent); width: 24px; border-radius: 4px; }
+
+  /* ── QR ── */
+  .qr-wrap { text-align: center; padding: 20px; }
+  .qr-wrap img { border-radius: 12px; border: 2px solid var(--border); max-width: 180px; }
+  .url-chip {
+    display: inline-block; margin-top: 12px; padding: 8px 18px;
+    background: var(--surface2); border: 1px solid var(--border); border-radius: 8px;
+    font-family: monospace; font-size: 13px; color: var(--accent);
+  }
+
+  /* ── Drop zone ── */
+  #dropzone {
+    border: 2px dashed var(--border); border-radius: var(--radius);
+    padding: 40px; text-align: center; transition: var(--transition); cursor: pointer; margin-bottom: 24px;
+  }
+  #dropzone.drag-over { border-color: var(--accent); background: rgba(91,141,239,0.06); }
+  #dropzone svg { margin-bottom: 12px; }
+  #dropzone p { color: var(--muted); font-size: 14px; }
+  #dropzone span { color: var(--accent); font-weight: 500; }
+  #file-input { display: none; }
+
+  /* ── Progress ── */
+  .progress-wrap { margin-bottom: 16px; display: none; }
+  .progress-wrap.show { display: block; }
+  .progress-bar { height: 4px; background: var(--border); border-radius: 2px; overflow: hidden; }
+  .progress-fill { height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent2)); border-radius: 2px; transition: width 0.2s; width: 0%; }
+  .progress-label { font-size: 12px; color: var(--muted); margin-top: 6px; }
+
+  /* ── File list ── */
+  .file-search { margin-bottom: 16px; }
+  .file-grid { display: flex; flex-direction: column; gap: 10px; }
+  .file-row {
+    display: flex; align-items: center; gap: 14px;
+    padding: 14px 18px; background: var(--surface2);
+    border: 1px solid var(--border); border-radius: 10px;
+    transition: var(--transition);
+  }
+  .file-row:hover { border-color: var(--accent); }
+  .file-icon { font-size: 22px; flex-shrink: 0; }
+  .file-info { flex: 1; min-width: 0; }
+  .file-name { font-size: 14px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .file-meta { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .file-actions { display: flex; gap: 8px; flex-shrink: 0; }
+  .empty-state { text-align: center; padding: 60px 20px; color: var(--muted); }
+  .empty-state svg { margin-bottom: 12px; opacity: 0.4; }
+
+  /* ── Users table ── */
+  .users-grid { display: flex; flex-direction: column; gap: 10px; }
+  .user-row {
+    display: flex; align-items: center; gap: 16px;
+    padding: 16px 18px; background: var(--surface2);
+    border: 1px solid var(--border); border-radius: 10px;
+  }
+  .user-avatar { width: 38px; height: 38px; border-radius: 50%; background: linear-gradient(135deg, var(--accent), var(--accent2)); display: flex; align-items: center; justify-content: center; font-size: 15px; font-weight: 700; flex-shrink: 0; }
+  .user-info { flex: 1; }
+  .user-name { font-size: 14px; font-weight: 600; }
+  .user-seen { font-size: 12px; color: var(--muted); }
+  .perms { display: flex; gap: 8px; flex-wrap: wrap; }
+  .perm-toggle { display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--muted); }
+  .toggle-sw { position: relative; width: 36px; height: 20px; }
+  .toggle-sw input { opacity: 0; width: 0; height: 0; }
+  .toggle-knob {
+    position: absolute; inset: 0; border-radius: 10px;
+    background: var(--border); cursor: pointer; transition: var(--transition);
+  }
+  .toggle-knob::before {
+    content: ''; position: absolute; width: 14px; height: 14px;
+    border-radius: 50%; left: 3px; top: 3px;
+    background: #fff; transition: var(--transition);
+  }
+  .toggle-sw input:checked + .toggle-knob { background: var(--accent); }
+  .toggle-sw input:checked + .toggle-knob::before { transform: translateX(16px); }
+
+  /* ── Stats ── */
+  .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 14px; margin-bottom: 20px; }
+  .stat-card { background: var(--surface2); border: 1px solid var(--border); border-radius: 10px; padding: 18px; }
+  .stat-val { font-size: 22px; font-weight: 700; color: var(--accent); }
+  .stat-label { font-size: 12px; color: var(--muted); margin-top: 4px; }
+
+  /* ── IP list ── */
+  .ip-list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+  .ip-chip {
+    padding: 6px 14px; background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 6px; font-family: monospace; font-size: 12px; color: var(--text);
+  }
+
+  /* ── Spinner ── */
+  .spinner { width: 18px; height: 18px; border: 2px solid rgba(255,255,255,0.2); border-top-color: #fff; border-radius: 50%; animation: spin 0.6s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ── Toasts ── */
+  #toasts { position: fixed; bottom: 24px; right: 24px; display: flex; flex-direction: column; gap: 8px; z-index: 9999; }
+  .toast {
+    padding: 12px 20px; border-radius: 10px; font-size: 13px; font-weight: 500;
+    background: var(--surface2); border: 1px solid var(--border);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+    animation: slideIn 0.2s ease; max-width: 320px;
+  }
+  .toast.success { border-color: rgba(62,207,142,0.4); color: var(--success); }
+  .toast.error   { border-color: rgba(244,111,111,0.4); color: var(--danger); }
+  @keyframes slideIn { from { opacity:0; transform: translateX(20px); } }
+
+  /* ── Login tabs ── */
+  .tabs { display: flex; gap: 4px; margin-bottom: 24px; }
+  .tab { flex:1; padding: 9px; text-align: center; border-radius: 8px; font-size: 13px; font-weight: 500; cursor: pointer; border: 1px solid var(--border); background: transparent; color: var(--muted); transition: var(--transition); }
+  .tab.active { background: var(--surface2); color: var(--text); border-color: var(--accent); }
+
+  @media (max-width: 600px) {
+    nav { padding: 0 14px; }
+    .page { padding: 24px 14px; }
+    .user-row { flex-wrap: wrap; }
+    .perms { flex-direction: column; }
+  }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- Nav -->
+  <nav id="main-nav" style="display:none">
+    <div class="nav-logo">⚡ LAN Store</div>
+    <div class="nav-spacer"></div>
+    <button class="nav-btn active" id="nav-files" onclick="showPage('files')">Files</button>
+    <button class="nav-btn" id="nav-shares" onclick="showPage('shares')">Drives</button>
+    <button class="nav-btn" id="nav-admin" onclick="showPage('admin')" style="display:none">Admin</button>
+    <div class="nav-user">
+      <span id="nav-username"></span>&nbsp;
+      <span id="nav-badge" class="badge"></span>
+    </div>
+    <button class="nav-btn" onclick="logout()" style="color:var(--danger)">Sign out</button>
+  </nav>
+
+  <!-- ═══ WIZARD PAGE ═══ -->
+  <div class="page active" id="page-wizard">
+    <div style="max-width:480px;margin:0 auto;">
+      <div class="card">
+        <div class="step-indicator">
+          <div class="step-dot active" id="dot-0"></div>
+          <div class="step-dot" id="dot-1"></div>
+          <div class="step-dot" id="dot-2"></div>
+        </div>
+
+        <!-- Step 0: Welcome -->
+        <div class="wizard-step active" id="wstep-0">
+          <div style="text-align:center;padding:10px 0 24px">
+            <div style="font-size:52px;margin-bottom:12px">🚀</div>
+            <div class="card-title">Welcome to LAN Store</div>
+            <div class="card-sub" style="margin-bottom:0">Your personal file-sharing server is live on the local network. Let's set up the admin account.</div>
+          </div>
+          <button class="btn btn-primary" style="width:100%" onclick="wizardNext(1)">Get Started →</button>
+        </div>
+
+        <!-- Step 1: Admin setup -->
+        <div class="wizard-step" id="wstep-1">
+          <div class="card-title">Create Admin Account</div>
+          <div class="card-sub">You'll be the administrator — you can manage users and permissions.</div>
+          <div id="wizard-alert" class="alert alert-error"></div>
+          <div class="form-group">
+            <label>Choose your username</label>
+            <input type="text" id="wizard-username" placeholder="e.g. sachin" autocomplete="off" />
+          </div>
+          <button class="btn btn-primary" style="width:100%;margin-top:8px" onclick="wizardEnroll()">
+            <span id="wizard-btn-text">Create Account</span>
+          </button>
+        </div>
+
+        <!-- Step 2: Share -->
+        <div class="wizard-step" id="wstep-2">
+          <div class="card-title">You're all set! 🎉</div>
+          <div class="card-sub">Share this link or QR code with others on the same Wi-Fi.</div>
+          <div class="qr-wrap">
+            <img id="qr-img" src="" alt="QR Code" />
+            <br/>
+            <div class="url-chip" id="qr-url"></div>
+          </div>
+          <div class="alert alert-info show" style="margin-top:16px">
+            💡 Your session token is stored. Just click Continue to start using LAN Store.
+          </div>
+          <button class="btn btn-primary" style="width:100%;margin-top:16px" onclick="enterApp()">Continue to LAN Store →</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ LOGIN PAGE ═══ -->
+  <div class="page" id="page-login">
+    <div style="max-width:420px;margin:0 auto;">
+      <div style="text-align:center;margin-bottom:28px">
+        <div style="font-size:40px">⚡</div>
+        <div style="font-size:22px;font-weight:700;margin-top:8px">LAN Store</div>
+        <div style="font-size:14px;color:var(--muted);margin-top:4px">Join the local network</div>
+      </div>
+      <div class="card">
+        <div class="tabs">
+          <div class="tab active" id="tab-enroll" onclick="switchTab('enroll')">New User</div>
+          <div class="tab" id="tab-login" onclick="switchTab('login')">Sign In</div>
+        </div>
+
+        <div id="alert-login" class="alert alert-error"></div>
+
+        <!-- Enroll form -->
+        <div id="form-enroll">
+          <div class="form-group">
+            <label>Choose a username</label>
+            <input type="text" id="enroll-username" placeholder="e.g. alex" autocomplete="off" />
+          </div>
+          <button class="btn btn-primary" style="width:100%" onclick="doEnroll()">Join Network</button>
+          <div id="enroll-token-area" style="display:none;margin-top:16px">
+            <div style="font-size:13px;color:var(--muted);margin-bottom:6px">⚠️ Save your token — you need it to sign in again:</div>
+            <div class="token-box" id="enroll-token-display"></div>
+            <button class="btn btn-ghost btn-sm" onclick="copyToken()">Copy Token</button>
+          </div>
+        </div>
+
+        <!-- Login form -->
+        <div id="form-login" style="display:none">
+          <div class="form-group">
+            <label>Username</label>
+            <input type="text" id="login-username" placeholder="your username" autocomplete="off" />
+          </div>
+          <div class="form-group">
+            <label>Token</label>
+            <input type="text" id="login-token" placeholder="paste your token" autocomplete="off" />
+          </div>
+          <button class="btn btn-primary" style="width:100%" onclick="doLogin()">Sign In</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ FILES PAGE ═══ -->
+  <div class="page" id="page-files">
+    <!-- Drop zone -->
+    <div id="dropzone" onclick="document.getElementById('file-input').click()">
+      <input type="file" id="file-input" multiple onchange="handleFileSelect(this.files)" />
+      <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.5">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5"/>
+      </svg>
+      <p>Drop files here or <span>click to browse</span></p>
+    </div>
+
+    <div class="progress-wrap" id="upload-progress">
+      <div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
+      <div class="progress-label" id="progress-label">Uploading…</div>
+    </div>
+
+    <!-- File list -->
+    <div class="card">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
+        <div style="font-size:16px;font-weight:600;flex:1">Files</div>
+        <button class="btn btn-ghost btn-sm" onclick="loadFiles()">↻ Refresh</button>
+      </div>
+      <input class="file-search" type="text" placeholder="Search files…" oninput="filterFiles(this.value)" id="file-search" />
+      <div class="file-grid" id="file-list">
+        <div class="empty-state">
+          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2">
+            <path d="M3 7c0-1.1.9-2 2-2h4l2 2h8c1.1 0 2 .9 2 2v8c0 1.1-.9 2-2 2H5c-1.1 0-2-.9-2-2V7z"/>
+          </svg>
+          <p>No files yet — upload something!</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<!-- ═══ SHARES PAGE ═══ -->
+  <div class="page" id="page-shares">
+    <div class="card">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
+        <div style="font-size:16px;font-weight:600;flex:1" id="shares-title">Shared Drives</div>
+        <button class="btn btn-ghost btn-sm" onclick="loadSharesView()">↻ Refresh</button>
+      </div>
+      
+      <!-- Breadcrumb -->
+      <div id="shares-breadcrumb" style="font-size:13px; font-family:monospace; color:var(--accent); margin-bottom:16px; display:none; flex-wrap:wrap; gap:6px;">
+      </div>
+
+      <div class="file-grid" id="shares-list">
+        <!-- populated via js -->
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ ADMIN PAGE ═══ -->
+  <div class="page" id="page-admin">
+    <div class="card">
+      <div class="card-title">Server Info</div>
+      <div class="stats-grid" id="stats-grid"></div>
+      <div style="font-size:13px;color:var(--muted);margin-bottom:6px">Network addresses (share any of these):</div>
+      <div class="ip-list" id="ip-list"></div>
+    </div>
+
+    <div class="card">
+      <div style="display:flex;align-items:center;margin-bottom:20px">
+        <div class="card-title" style="margin-bottom:0;flex:1">Users</div>
+        <button class="btn btn-ghost btn-sm" onclick="loadUsers()">↻ Refresh</button>
+      </div>
+      <div class="users-grid" id="users-list">
+        <div style="color:var(--muted);font-size:14px">Loading…</div>
+      </div>
+    </div>
+
+<div class="card">
+      <div class="card-title">Shared Drives</div>
+      <div class="card-sub">Map local folders on the host machine so users can browse them.</div>
+      <div class="form-group">
+        <label>Drive Name</label>
+        <input type="text" id="admin-share-name" placeholder="e.g. Movies" />
+      </div>
+      <div class="form-group">
+        <label>Absolute Path</label>
+        <input type="text" id="admin-share-path" placeholder="e.g. /Users/sachin/Movies or D:\Movies" />
+      </div>
+      <button class="btn btn-primary" onclick="addAdminShare()">Add Drive</button>
+      
+      <div style="margin-top:20px; font-weight:600; font-size:14px; margin-bottom:10px;">Mapped Drives</div>
+      <div id="admin-shares-list" class="file-grid">
+         <div style="color:var(--muted);font-size:14px">Loading…</div>
+      </div>
+    </div>
+
+    <!-- QR panel -->
+    <div class="card" style="text-align:center">
+      <div class="card-title">Invite to Network</div>
+      <div class="card-sub">Anyone on the same Wi-Fi can scan this to join.</div>
+      <div class="qr-wrap">
+        <img id="admin-qr-img" src="" alt="QR" />
+        <br/>
+        <div class="url-chip" id="admin-qr-url"></div>
+      </div>
+    </div>
+  </div>
+
+</div><!-- #app -->
+
+<!-- Toasts -->
+<div id="toasts"></div>
+
+<script>
+// ── State ──────────────────────────────────────────────────────────────────────
+let SESSION = null;          // {username, token, role, bearer, permissions}
+let ALL_FILES = [];
+const API = '';              // same origin
+
+let CURRENT_SHARE_ID = null;
+let CURRENT_SHARE_PATH = "";
+let ALL_SHARES = [];
+
+
+// ── Utils ──────────────────────────────────────────────────────────────────────
+const $ = id => document.getElementById(id);
+function toast(msg, type='success') {
+  const t = document.createElement('div');
+  t.className = `toast ${type}`;
+  t.textContent = msg;
+  $('toasts').appendChild(t);
+  setTimeout(() => t.remove(), 3200);
+}
+function showAlert(id, msg) {
+  const el = $(id);
+  el.textContent = msg;
+  el.className = 'alert alert-error show';
+}
+function clearAlert(id) { $(id).className = 'alert alert-error'; }
+function fmtSize(bytes) {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1048576) return (bytes/1024).toFixed(1) + ' KB';
+  if (bytes < 1073741824) return (bytes/1048576).toFixed(1) + ' MB';
+  return (bytes/1073741824).toFixed(2) + ' GB';
+}
+function fmtDate(iso) {
+  if (!iso) return '—';
+  return new Date(iso).toLocaleString();
+}
+function fileIcon(name) {
+  const ext = (name.split('.').pop() || '').toLowerCase();
+  const map = { jpg:'🖼️', jpeg:'🖼️', png:'🖼️', gif:'🖼️', webp:'🖼️', svg:'🖼️',
+    mp4:'🎬', mov:'🎬', avi:'🎬', mkv:'🎬', webm:'🎬',
+    mp3:'🎵', wav:'🎵', flac:'🎵', aac:'🎵',
+    pdf:'📄', doc:'📝', docx:'📝', xls:'📊', xlsx:'📊', ppt:'📋', pptx:'📋',
+    zip:'📦', rar:'📦', tar:'📦', gz:'📦', '7z':'📦',
+    js:'💻', ts:'💻', py:'🐍', html:'🌐', css:'🎨', json:'📋',
+    txt:'📃', md:'📃', csv:'📊' };
+  return map[ext] || '📁';
+}
+async function apiFetch(path, opts={}) {
+  const headers = { ...(opts.headers||{}) };
+  if (SESSION) headers['Authorization'] = `Bearer ${SESSION.bearer}`;
+  const res = await fetch(API + path, { ...opts, headers });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || 'Request failed');
+  }
+  return res.json();
+}
+
+// ── Session persistence ────────────────────────────────────────────────────────
+function saveSession(s) {
+  SESSION = s;
+  localStorage.setItem('lansession', JSON.stringify(s));
+}
+function loadSession() {
+  try { return JSON.parse(localStorage.getItem('lansession')); } catch { return null; }
+}
+function logout() {
+  localStorage.removeItem('lansession');
+  SESSION = null;
+  location.reload();
+}
+
+// ── Page routing ───────────────────────────────────────────────────────────────
+function showPage(name) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  $(`page-${name}`).classList.add('active');
+  document.querySelectorAll('.nav-btn[id^=nav-]').forEach(b => b.classList.remove('active'));
+  const navBtn = $(`nav-${name}`);
+  if (navBtn) navBtn.classList.add('active');
+  if (name === 'files') loadFiles();
+  if (name === 'shares') { CURRENT_SHARE_ID=null; CURRENT_SHARE_PATH=""; loadSharesView(); }
+  if (name === 'admin') { loadUsers(); loadAdminQR(); loadStats(); loadAdminShares(); }
+}
+
+function enterApp() {
+  $('main-nav').style.display = 'flex';
+  if (SESSION?.role === 'admin') $('nav-admin').style.display = 'inline-flex';
+  $('nav-username').textContent = SESSION.username;
+  $('nav-badge').textContent = SESSION.role;
+  $('nav-badge').className = `badge ${SESSION.role === 'admin' ? 'badge-admin' : 'badge-user'}`;
+  showPage('files');
+}
+
+// ── Boot ───────────────────────────────────────────────────────────────────────
+async function boot() {
+  const status = await apiFetch('/api/status').catch(() => null);
+  if (!status) { showPage('login'); return; }
+
+  const s = loadSession();
+  if (s) {
+    // try to validate existing session
+    try {
+      SESSION = s;
+      const me = await apiFetch('/api/me');
+      SESSION = { ...s, ...me };
+      saveSession(SESSION);
+      enterApp();
+      return;
+    } catch { SESSION = null; }
+  }
+
+  if (!status.setup_done) {
+    // First run — show wizard
+    showPage('wizard');
+    // pre-load QR (step 2)
+  } else {
+    showPage('login');
+  }
+}
+
+// ── Wizard ─────────────────────────────────────────────────────────────────────
+function wizardNext(step) {
+  document.querySelectorAll('.wizard-step').forEach((el, i) => {
+    el.classList.toggle('active', i === step);
+    $(`dot-${i}`)?.classList.toggle('active', i === step);
+  });
+}
+
+async function wizardEnroll() {
+  const username = $('wizard-username').value.trim();
+  if (!username) { showAlert('wizard-alert', 'Please enter a username'); return; }
+  clearAlert('wizard-alert');
+  $('wizard-btn-text').textContent = 'Creating…';
+  try {
+    const res = await apiFetch('/api/enroll', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username })
+    });
+    saveSession({ username: res.username, token: res.token, bearer: res.bearer, role: res.role, permissions: res.permissions || { upload:true, download:true, delete:true } });
+    // fetch QR
+    const qr = await apiFetch('/api/qr');
+    $('qr-img').src = `data:image/png;base64,${qr.qr_base64}`;
+    $('qr-url').textContent = qr.url;
+    wizardNext(2);
+  } catch(e) {
+    showAlert('wizard-alert', e.message);
+  } finally {
+    $('wizard-btn-text').textContent = 'Create Account';
+  }
+}
+
+// ── Login / Enroll ────────────────────────────────────────────────────────────
+function switchTab(tab) {
+  $('tab-enroll').classList.toggle('active', tab==='enroll');
+  $('tab-login').classList.toggle('active', tab==='login');
+  $('form-enroll').style.display = tab==='enroll' ? 'block' : 'none';
+  $('form-login').style.display = tab==='login' ? 'block' : 'none';
+  $('enroll-token-area').style.display = 'none';
+  clearAlert('alert-login');
+}
+async function doEnroll() {
+  const username = $('enroll-username').value.trim();
+  if (!username) { showAlert('alert-login', 'Enter a username'); return; }
+  clearAlert('alert-login');
+  try {
+    const res = await apiFetch('/api/enroll', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username })
+    });
+    saveSession({ username: res.username, token: res.token, bearer: res.bearer, role: res.role, permissions: res.permissions || { upload:true, download:true, delete:false } });
+    $('enroll-token-display').textContent = res.token;
+    $('enroll-token-area').style.display = 'block';
+    toast('Welcome to LAN Store!');
+    setTimeout(enterApp, 1200);
+  } catch(e) { showAlert('alert-login', e.message); }
+}
+async function doLogin() {
+  const username = $('login-username').value.trim();
+  const token = $('login-token').value.trim();
+  if (!username || !token) { showAlert('alert-login', 'Enter both username and token'); return; }
+  clearAlert('alert-login');
+  try {
+    const res = await apiFetch('/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, token })
+    });
+    saveSession({ username: res.username, token, bearer: res.bearer, role: res.role, permissions: res.permissions });
+    toast(`Welcome back, ${username}!`);
+    enterApp();
+  } catch(e) { showAlert('alert-login', e.message); }
+}
+function copyToken() {
+  navigator.clipboard.writeText($('enroll-token-display').textContent).then(() => toast('Token copied!'));
+}
+
+// ── Files ─────────────────────────────────────────────────────────────────────
+async function loadFiles() {
+  try {
+    ALL_FILES = await apiFetch('/api/files');
+    renderFiles(ALL_FILES);
+  } catch(e) { toast(e.message, 'error'); }
+}
+function filterFiles(q) {
+  const r = ALL_FILES.filter(f => f.original_name.toLowerCase().includes(q.toLowerCase()));
+  renderFiles(r);
+}
+function renderFiles(files) {
+  const el = $('file-list');
+  if (!files.length) {
+    el.innerHTML = `<div class="empty-state">
+      <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2">
+        <path d="M3 7c0-1.1.9-2 2-2h4l2 2h8c1.1 0 2 .9 2 2v8c0 1.1-.9 2-2 2H5c-1.1 0-2-.9-2-2V7z"/>
+      </svg>
+      <p>No files yet — upload something!</p></div>`;
+    return;
+  }
+  const canDelete = SESSION?.permissions?.delete || SESSION?.role === 'admin';
+  el.innerHTML = files.map(f => `
+    <div class="file-row">
+      <div class="file-icon">${fileIcon(f.original_name)}</div>
+      <div class="file-info">
+        <div class="file-name">${escHtml(f.original_name)}</div>
+        <div class="file-meta">${fmtSize(f.size)} &nbsp;·&nbsp; ${escHtml(f.owner)} &nbsp;·&nbsp; ${fmtDate(f.uploaded_at)}</div>
+      </div>
+      <div class="file-actions">
+        <button class="btn btn-ghost btn-sm" onclick="downloadFile('${f.id}','${escHtml(f.original_name)}')">⬇ Download</button>
+        ${canDelete ? `<button class="btn btn-danger btn-sm" onclick="deleteFile('${f.id}')">✕</button>` : ''}
+      </div>
+    </div>`).join('');
+}
+function escHtml(s) { return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+function downloadFile(id, name) {
+  const a = document.createElement('a');
+  a.href = `/api/download/${id}`;
+  a.setAttribute('download', name);
+  // inject auth via header isn't possible with <a>, so open in new tab with token via query workaround
+  // Instead use fetch + blob
+  apiFetchBlob(`/api/download/${id}`).then(blob => {
+    const url = URL.createObjectURL(blob);
+    a.href = url;
+    a.download = name;
+    a.click();
+    URL.revokeObjectURL(url);
+  }).catch(e => toast(e.message, 'error'));
+}
+async function apiFetchBlob(path) {
+  const res = await fetch(API + path, { headers: { 'Authorization': `Bearer ${SESSION.bearer}` } });
+  if (!res.ok) throw new Error('Download failed');
+  return res.blob();
+}
+async function deleteFile(id) {
+  if (!confirm('Delete this file?')) return;
+  try {
+    await apiFetch(`/api/files/${id}`, { method: 'DELETE' });
+    toast('File deleted');
+    loadFiles();
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+// ── Upload ─────────────────────────────────────────────────────────────────────
+const dz = $('dropzone');
+dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('drag-over'); });
+dz.addEventListener('dragleave', () => dz.classList.remove('drag-over'));
+dz.addEventListener('drop', e => {
+  e.preventDefault(); dz.classList.remove('drag-over');
+  handleFileSelect(e.dataTransfer.files);
+});
+function handleFileSelect(files) {
+  if (!files.length) return;
+  if (!SESSION?.permissions?.upload && SESSION?.role !== 'admin') { toast('No upload permission', 'error'); return; }
+  uploadFiles(Array.from(files));
+}
+async function uploadFiles(files) {
+  const pw = $('upload-progress');
+  const fill = $('progress-fill');
+  const label = $('progress-label');
+  pw.classList.add('show');
+  for (let i = 0; i < files.length; i++) {
+    const f = files[i];
+    label.textContent = `Uploading ${f.name} (${i+1}/${files.length})…`;
+    fill.style.width = `${Math.round((i/files.length)*100)}%`;
+    try {
+      const fd = new FormData();
+      fd.append('file', f);
+      const res = await fetch(API + '/api/upload', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${SESSION.bearer}` },
+        body: fd,
+      });
+      if (!res.ok) { const e = await res.json(); toast(e.detail || 'Upload failed', 'error'); continue; }
+      toast(`✓ ${f.name} uploaded`);
+    } catch { toast(`Failed: ${f.name}`, 'error'); }
+  }
+  fill.style.width = '100%';
+  label.textContent = 'Done!';
+  setTimeout(() => { pw.classList.remove('show'); fill.style.width = '0'; }, 1200);
+  loadFiles();
+}
+
+// ── Admin ─────────────────────────────────────────────────────────────────────
+async function loadUsers() {
+  try {
+    const users = await apiFetch('/api/admin/users');
+    renderUsers(users);
+  } catch(e) { toast(e.message, 'error'); }
+}
+function renderUsers(users) {
+  const el = $('users-list');
+  if (!users.length) { el.innerHTML = '<div style="color:var(--muted);font-size:14px">No users yet.</div>'; return; }
+  el.innerHTML = users.map(u => {
+    const initials = u.username.slice(0,2).toUpperCase();
+    const perms = ['upload','download','delete'];
+    return `<div class="user-row">
+      <div class="user-avatar">${initials}</div>
+      <div class="user-info">
+        <div class="user-name">${escHtml(u.username)} <span class="badge ${u.role==='admin'?'badge-admin':'badge-user'}">${u.role}</span></div>
+        <div class="user-seen">Last seen: ${fmtDate(u.last_seen)}</div>
+      </div>
+      <div class="perms">
+        ${perms.map(p => `
+          <label class="perm-toggle">
+            <label class="toggle-sw">
+              <input type="checkbox" ${u.permissions?.[p]?'checked':''} onchange="togglePerm('${u.username}','${p}',this.checked)" ${u.role==='admin'?'disabled':''} />
+              <span class="toggle-knob"></span>
+            </label>
+            ${p}
+          </label>`).join('')}
+      </div>
+      ${u.username !== SESSION.username && u.role !== 'admin' ? `<button class="btn btn-danger btn-sm" onclick="kickUser('${u.username}')">Remove</button>` : ''}
+    </div>`;
+  }).join('');
+}
+async function togglePerm(username, perm, value) {
+  try {
+    await apiFetch(`/api/admin/users/${username}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ permissions: { [perm]: value } })
+    });
+    toast(`${username}: ${perm} ${value?'enabled':'disabled'}`);
+  } catch(e) { toast(e.message,'error'); loadUsers(); }
+}
+async function kickUser(username) {
+  if (!confirm(`Remove user "${username}"?`)) return;
+  try {
+    await apiFetch(`/api/admin/users/${username}`, { method: 'DELETE' });
+    toast(`${username} removed`);
+    loadUsers();
+  } catch(e) { toast(e.message,'error'); }
+}
+async function loadAdminQR() {
+  try {
+    const qr = await apiFetch('/api/qr');
+    $('admin-qr-img').src = `data:image/png;base64,${qr.qr_base64}`;
+    $('admin-qr-url').textContent = qr.url;
+  } catch {}
+}
+async function loadStats() {
+  try {
+    const s = await apiFetch('/api/status');
+    $('stats-grid').innerHTML = `
+      <div class="stat-card"><div class="stat-val">${s.storage.file_count}</div><div class="stat-label">Files stored</div></div>
+      <div class="stat-card"><div class="stat-val">${fmtSize(s.storage.total_bytes)}</div><div class="stat-label">Total size</div></div>
+    `;
+    $('ip-list').innerHTML = s.lan_ips.map(ip =>
+      `<div class="ip-chip" style="cursor:pointer" onclick="navigator.clipboard.writeText('http://${ip}:${s.port}').then(()=>toast('Copied!'))">http://${ip}:${s.port}</div>`
+    ).join('');
+  } catch {}
+}
+
+// ── Shares ────────────────────────────────────────────────────────────────────
+async function loadSharesView() {
+  if (!CURRENT_SHARE_ID) {
+    // Load list of shares
+    $('shares-breadcrumb').style.display = 'none';
+    $('shares-title').textContent = 'Shared Drives';
+    try {
+      ALL_SHARES = await apiFetch('/api/shares');
+      renderSharesList();
+    } catch(e) { toast(e.message, 'error'); }
+  } else {
+    // Load directory
+    try {
+      const items = await apiFetch(`/api/shares/${CURRENT_SHARE_ID}/browse?path=${encodeURIComponent(CURRENT_SHARE_PATH)}`);
+      renderShareDir(items);
+      renderBreadcrumb();
+    } catch(e) {
+      toast(e.message, 'error');
+      // fallback
+      CURRENT_SHARE_ID = null;
+      CURRENT_SHARE_PATH = "";
+      loadSharesView();
+    }
+  }
+}
+
+function renderSharesList() {
+  const el = $('shares-list');
+  if (!ALL_SHARES.length) {
+    el.innerHTML = '<div class="empty-state"><p>No shared drives available.</p></div>';
+    return;
+  }
+  el.innerHTML = ALL_SHARES.map(s => `
+    <div class="file-row" style="cursor:pointer" onclick="openShare('${s.id}', '${escHtml(s.name).replace(/'/g, "\'")}')">
+      <div class="file-icon">💾</div>
+      <div class="file-info">
+        <div class="file-name">${escHtml(s.name)}</div>
+        <div class="file-meta">Created: ${fmtDate(s.created_at)}</div>
+      </div>
+    </div>
+  `).join('');
+}
+
+function openShare(id, name) {
+  CURRENT_SHARE_ID = id;
+  CURRENT_SHARE_PATH = "";
+  $('shares-title').textContent = name;
+  loadSharesView();
+}
+
+function renderBreadcrumb() {
+  const bc = $('shares-breadcrumb');
+  bc.style.display = 'flex';
+  const parts = CURRENT_SHARE_PATH.split('/').filter(Boolean);
+  let html = `<span style="cursor:pointer; text-decoration:underline" onclick="navShareDir(-1)">Home</span>`;
+  let accum = "";
+  for (let i = 0; i < parts.length; i++) {
+    accum += (accum ? "/" : "") + parts[i];
+    const pathArg = accum;
+    html += ` <span>/</span> <span style="cursor:pointer; text-decoration:underline" onclick="navShareDir('${escHtml(pathArg).replace(/'/g, "\'")}')">${escHtml(parts[i])}</span>`;
+  }
+  bc.innerHTML = html;
+}
+
+function navShareDir(path) {
+  if (path === -1) {
+    CURRENT_SHARE_ID = null;
+    CURRENT_SHARE_PATH = "";
+  } else {
+    CURRENT_SHARE_PATH = path;
+  }
+  loadSharesView();
+}
+
+function renderShareDir(items) {
+  const el = $('shares-list');
+  if (!items.length) {
+    el.innerHTML = '<div class="empty-state"><p>Folder is empty</p></div>';
+    return;
+  }
+  el.innerHTML = items.map(item => {
+    const isDir = item.type === 'dir';
+    const icon = isDir ? '📁' : fileIcon(item.name);
+    const sz = isDir ? 'Folder' : fmtSize(item.size);
+    const subpath = CURRENT_SHARE_PATH ? CURRENT_SHARE_PATH + '/' + item.name : item.name;
+    const pathArg = subpath.replace(/'/g, "\'");
+    
+    const onClick = isDir ? `onclick="navShareDir('${escHtml(pathArg)}')" style="cursor:pointer"` : '';
+    
+    return `
+    <div class="file-row" ${onClick}>
+      <div class="file-icon">${icon}</div>
+      <div class="file-info">
+        <div class="file-name">${escHtml(item.name)}</div>
+        <div class="file-meta">${sz} &nbsp;·&nbsp; ${fmtDate(item.modified_at)}</div>
+      </div>
+      <div class="file-actions">
+        ${!isDir ? `<button class="btn btn-ghost btn-sm" onclick="downloadShareFile('${CURRENT_SHARE_ID}','${escHtml(pathArg)}','${escHtml(item.name).replace(/'/g, "\'")}')">⬇ Download</button>` : ''}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function downloadShareFile(shareId, subpath, name) {
+  if (window.event) window.event.stopPropagation();
+  const url = `/api/shares/${shareId}/download?path=${encodeURIComponent(subpath)}`;
+  toast('Downloading ' + name + '...');
+  apiFetchBlob(url).then(blob => {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }).catch(e => toast('Download failed: ' + e.message, 'error'));
+}
+
+async function loadAdminShares() {
+  try {
+    const shares = await apiFetch('/api/shares');
+    const el = $('admin-shares-list');
+    if (!shares.length) { el.innerHTML = '<div style="color:var(--muted);font-size:14px">No drives mapped.</div>'; return; }
+    el.innerHTML = shares.map(s => `
+      <div class="file-row">
+        <div class="file-icon">💾</div>
+        <div class="file-info">
+          <div class="file-name">${escHtml(s.name)}</div>
+          <div class="file-meta" style="word-break:break-all">${escHtml(s.path)}</div>
+        </div>
+        <div class="file-actions">
+          <button class="btn btn-danger btn-sm" onclick="removeAdminShare('${s.id}')">✕</button>
+        </div>
+      </div>
+    `).join('');
+  } catch(e) { }
+}
+
+async function addAdminShare() {
+  const name = $('admin-share-name').value.trim();
+  const path = $('admin-share-path').value.trim();
+  if (!name || !path) return toast('Name and path required', 'error');
+  try {
+    await apiFetch('/api/admin/shares', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, path })
+    });
+    $('admin-share-name').value = '';
+    $('admin-share-path').value = '';
+    toast('Drive added');
+    loadAdminShares();
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+async function removeAdminShare(id) {
+  if (!confirm('Remove this mapped drive?')) return;
+  try {
+    await apiFetch(`/api/admin/shares/${id}`, { method: 'DELETE' });
+    toast('Drive removed');
+    loadAdminShares();
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+boot();
+</script>
+</body>
+</html>
