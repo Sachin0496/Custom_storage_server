@@ -1,0 +1,19 @@
+.venv/
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Runtime logs
+*.log
+server.out.log
+server.err.log
+
+# Local runtime data
+files.json
+users.json
+shares.json
+storage/
+
+# OS/editor files
+.DS_Store
+Thumbs.db

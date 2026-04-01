@@ -1,11 +1,28 @@
 import json
 import uuid
 import shutil
+import stat
 from datetime import datetime
 from pathlib import Path
 import os
 
 SHARES_FILE = Path("shares.json")
+COPY_BUFFER_SIZE = 8 * 1024 * 1024  # 8 MiB chunks for better throughput
+
+
+def _make_writable(path_str: str):
+    try:
+        os.chmod(path_str, stat.S_IWRITE | stat.S_IREAD)
+    except OSError:
+        pass
+
+
+def _rmtree_force(path: Path):
+    def _onerror(func, path_str, exc_info):
+        _make_writable(path_str)
+        func(path_str)
+
+    shutil.rmtree(path, onerror=_onerror)
 
 
 def _load() -> dict:
@@ -50,6 +67,38 @@ def remove_share(share_id: str) -> bool:
 def list_shares() -> list:
     shares = _load()
     return list(shares.values())
+
+
+def shares_stats() -> dict:
+    """Aggregate statistics across mapped drives."""
+    shares = _load()
+    file_count = 0
+    total_bytes = 0
+    reachable_shares = 0
+
+    for entry in shares.values():
+        root = Path(entry.get("path", "")).resolve()
+        if not root.exists() or not root.is_dir():
+            continue
+        reachable_shares += 1
+        try:
+            for p in root.rglob("*"):
+                try:
+                    if p.is_file():
+                        st = p.stat()
+                        file_count += 1
+                        total_bytes += st.st_size
+                except (OSError, ValueError):
+                    pass
+        except OSError:
+            pass
+
+    return {
+        "mapped_drives": len(shares),
+        "reachable_drives": reachable_shares,
+        "file_count": file_count,
+        "total_bytes": total_bytes,
+    }
 
 
 def _safe_resolve(share_path: str, subpath: str) -> Path | None:
@@ -143,6 +192,8 @@ def create_share_dir(share_id: str, parent_subpath: str, new_dir_name: str) -> b
     try:
         target.mkdir()
         return True
+    except PermissionError:
+        return "PERMISSION_DENIED"
     except OSError as e:
         return str(e)
 
@@ -163,11 +214,21 @@ def delete_share_item(share_id: str, subpath: str) -> bool | str:
         
     try:
         if target.is_dir():
-            shutil.rmtree(target)
+            _rmtree_force(target)
         else:
-            target.unlink()
+            try:
+                target.unlink()
+            except PermissionError:
+                _make_writable(str(target))
+                target.unlink()
         return True
+    except PermissionError:
+        return "PERMISSION_DENIED"
     except OSError as e:
+        if getattr(e, "winerror", None) == 5:
+            return "PERMISSION_DENIED"
+        if getattr(e, "winerror", None) == 32:
+            return "FILE_IN_USE"
         return str(e)
 
 
@@ -186,7 +247,10 @@ def upload_share_file(share_id: str, parent_subpath: str, file_obj, filename: st
         
     try:
         with open(target, "wb") as out:
-            shutil.copyfileobj(file_obj.file, out)
+            shutil.copyfileobj(file_obj.file, out, length=COPY_BUFFER_SIZE)
         return True
+    except PermissionError:
+        return "PERMISSION_DENIED"
     except OSError as e:
         return str(e)
+

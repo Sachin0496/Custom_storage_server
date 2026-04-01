@@ -5,6 +5,7 @@ from datetime import datetime
 from pathlib import Path
 
 FILES_META = Path("files.json")
+COPY_BUFFER_SIZE = 8 * 1024 * 1024  # 8 MiB chunks for better throughput
 
 
 def _ensure_storage(storage_path: Path):
@@ -31,7 +32,7 @@ def save_file(upload_file, owner: str, storage_path: Path) -> dict:
     dest = storage_path / safe_name
 
     with open(dest, "wb") as out:
-        shutil.copyfileobj(upload_file.file, out)
+        shutil.copyfileobj(upload_file.file, out, length=COPY_BUFFER_SIZE)
 
     size = dest.stat().st_size
     meta = _load_meta()
@@ -81,3 +82,4 @@ def storage_stats(storage_path: Path) -> dict:
     total = sum(f.stat().st_size for f in storage_path.iterdir() if f.is_file())
     count = len(_load_meta())
     return {"total_bytes": total, "file_count": count}
+

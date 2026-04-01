@@ -3,6 +3,7 @@ import os
 import base64
 import io
 import socket
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
 
@@ -27,7 +28,21 @@ STORAGE_PATH = Path(CONFIG.get("storage_path", "./storage"))
 APP_NAME = CONFIG.get("app_name", "LAN Store")
 
 # ── App ────────────────────────────────────────────────────────────────────────
-app = FastAPI(title=APP_NAME, version="1.0.0")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    start_mdns(PORT, APP_NAME)
+    ips = get_all_ips()
+    print(f"\n{'='*50}")
+    print(f"  {APP_NAME} is running!")
+    print(f"  Local:   http://localhost:{PORT}")
+    for ip in ips:
+        print(f"  Network: http://{ip}:{PORT}")
+    print(f"{'='*50}\n")
+    yield
+    stop_mdns()
+
+app = FastAPI(title=APP_NAME, version="1.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -54,12 +69,13 @@ def _require_user(authorization: Optional[str] = Header(None)) -> dict:
     user = auth.authenticate(username, token)
     if not user:
         raise HTTPException(status_code=401, detail="Invalid credentials")
+    user["token"] = token
     return user
 
 
 def _require_admin(authorization: Optional[str] = Header(None)) -> dict:
     user = _require_user(authorization)
-    if user["role"] != "admin":
+    if not auth.is_admin_for_current_host(user):
         raise HTTPException(status_code=403, detail="Admin only")
     return user
 
@@ -92,6 +108,7 @@ def status():
         "primary_ip": get_lan_ip(),
         "port": PORT,
         "storage": store.storage_stats(STORAGE_PATH),
+        "shares": shares.shares_stats(),
     }
 
 
@@ -120,7 +137,7 @@ def enroll(req: EnrollRequest):
     if result is None:
         raise HTTPException(status_code=409, detail="Username already taken")
     # Return composite token: username:raw_token
-    result["bearer"] = f"{username}:{result['token']}"
+    result["bearer"] = f"{result['username']}:{result['token']}"
     return result
 
 
@@ -129,7 +146,7 @@ def login(req: LoginRequest):
     user = auth.authenticate(req.username, req.token)
     if not user:
         raise HTTPException(status_code=401, detail="Invalid username or token")
-    user["bearer"] = f"{req.username}:{req.token}"
+    user["bearer"] = f"{user['username']}:{req.token}"
     return user
 
 
@@ -225,6 +242,8 @@ def create_share_folder(share_id: str, path: str, name: str, user: dict = Depend
     if not user["permissions"].get("upload"):
         raise HTTPException(status_code=403, detail="No upload permission")
     result = shares.create_share_dir(share_id, path, name)
+    if result == "PERMISSION_DENIED":
+        raise HTTPException(status_code=403, detail="Server has no write access to this drive path")
     if result is not True:
         raise HTTPException(status_code=400, detail=result)
     return {"ok": True}
@@ -235,6 +254,10 @@ def delete_share_item(share_id: str, path: str, user: dict = Depends(_require_us
     if not user["permissions"].get("delete") and user["role"] != "admin":
         raise HTTPException(status_code=403, detail="No delete permission")
     result = shares.delete_share_item(share_id, path)
+    if result == "PERMISSION_DENIED":
+        raise HTTPException(status_code=403, detail="Server has no delete access for this item")
+    if result == "FILE_IN_USE":
+        raise HTTPException(status_code=409, detail="Item is in use by another process")
     if result is not True:
         raise HTTPException(status_code=400, detail=result)
     return {"ok": True}
@@ -254,6 +277,8 @@ async def upload_share_file(
     result = shares.upload_share_file(share_id, path, file, file.filename, overwrite)
     if result == "FILE_EXISTS":
         raise HTTPException(status_code=409, detail="File already exists")
+    elif result == "PERMISSION_DENIED":
+        raise HTTPException(status_code=403, detail="Server has no write access to this drive path")
     elif result is not True:
         raise HTTPException(status_code=400, detail=result)
     return {"ok": True}
@@ -309,28 +334,14 @@ def admin_remove_share(share_id: str, admin: dict = Depends(_require_admin)):
 def serve_spa(full_path: str = ""):
     index = Path("static/index.html")
     if index.exists():
-        return HTMLResponse(index.read_text())
+        return FileResponse(path=str(index), media_type="text/html; charset=utf-8")
     return HTMLResponse("<h1>Frontend not found</h1>", status_code=500)
 
 
 # ── Lifecycle ──────────────────────────────────────────────────────────────────
-@app.on_event("startup")
-def on_startup():
-    start_mdns(PORT, APP_NAME)
-    ips = get_all_ips()
-    print(f"\n{'='*50}")
-    print(f"  {APP_NAME} is running!")
-    print(f"  Local:   http://localhost:{PORT}")
-    for ip in ips:
-        print(f"  Network: http://{ip}:{PORT}")
-    print(f"{'='*50}\n")
-
-
-@app.on_event("shutdown")
-def on_shutdown():
-    stop_mdns()
+# The lifespan context manager handles both startup and shutdown.
 
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=PORT, reload=False)
+    uvicorn.run(app, host="0.0.0.0", port=PORT, reload=False)

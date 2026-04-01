@@ -22,8 +22,19 @@ fi
 # Install deps silently into venv
 .venv/bin/pip install -r requirements.txt -q --disable-pip-version-check
 
+# Ensure a portable writable shared drive exists and is mapped
+.venv/bin/python bootstrap_portable.py
+
+PORT=$(python3 -c "import json; print(json.load(open('config.json')).get('port', 8080))")
 # Open browser after short delay
-( sleep 1.5 && open "http://localhost:8080" ) &
+(
+  sleep 1.5
+  if command -v open >/dev/null 2>&1; then
+    open "http://localhost:$PORT" >/dev/null 2>&1 || true
+  elif command -v xdg-open >/dev/null 2>&1; then
+    xdg-open "http://localhost:$PORT" >/dev/null 2>&1 || true
+  fi
+) &
 
 # Start server using venv
-.venv/bin/python -m uvicorn main:app --host 0.0.0.0 --port 8080
+.venv/bin/python main.py

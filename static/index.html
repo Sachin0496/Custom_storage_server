@@ -233,8 +233,7 @@
   <nav id="main-nav" style="display:none">
     <div class="nav-logo">⚡ LAN Store</div>
     <div class="nav-spacer"></div>
-    <button class="nav-btn active" id="nav-files" onclick="showPage('files')">Files</button>
-    <button class="nav-btn" id="nav-shares" onclick="showPage('shares')">Drives</button>
+    <button class="nav-btn active" id="nav-shares" onclick="showPage('shares')">Drives</button>
     <button class="nav-btn" id="nav-admin" onclick="showPage('admin')" style="display:none">Admin</button>
     <div class="nav-user">
       <span id="nav-username"></span>&nbsp;
@@ -341,55 +340,30 @@
     </div>
   </div>
 
-  <!-- ═══ FILES PAGE ═══ -->
-  <div class="page" id="page-files">
-    <!-- Drop zone -->
-    <div id="dropzone" onclick="document.getElementById('file-input').click()">
-      <input type="file" id="file-input" multiple onchange="handleFileSelect(this.files)" />
-      <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.5">
-        <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5"/>
-      </svg>
-      <p>Drop files here or <span>click to browse</span></p>
-    </div>
-
-    <div class="progress-wrap" id="upload-progress">
-      <div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
-      <div class="progress-label" id="progress-label">Uploading…</div>
-    </div>
-
-    <!-- File list -->
-    <div class="card">
-      <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
-        <div style="font-size:16px;font-weight:600;flex:1">Files</div>
-        <button class="btn btn-ghost btn-sm" onclick="loadFiles()">↻ Refresh</button>
-      </div>
-      <input class="file-search" type="text" placeholder="Search files…" oninput="filterFiles(this.value)" id="file-search" />
-      <div class="file-grid" id="file-list">
-        <div class="empty-state">
-          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2">
-            <path d="M3 7c0-1.1.9-2 2-2h4l2 2h8c1.1 0 2 .9 2 2v8c0 1.1-.9 2-2 2H5c-1.1 0-2-.9-2-2V7z"/>
-          </svg>
-          <p>No files yet — upload something!</p>
-        </div>
-      </div>
-    </div>
-  </div>
-
-<!-- ═══ SHARES PAGE ═══ -->
   <div class="page" id="page-shares">
     <div class="card">
       <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
         <div style="font-size:16px;font-weight:600;flex:1" id="shares-title">Shared Drives</div>
         <div id="shares-actions" style="display:none; gap:8px;">
-           <button class="btn btn-primary btn-sm" onclick="promptCreateShareDir()">+ Folder</button>
-           <button class="btn btn-primary btn-sm" onclick="document.getElementById('share-file-input').click()">↑ Upload</button>
-           <input type="file" id="share-file-input" style="display:none" multiple onchange="uploadShareFile(this.files)" />
+           <input type="text" id="share-new-folder-name" placeholder="New folder name" style="max-width:180px" />
+           <button class="btn btn-primary btn-sm" onclick="createShareFolderFromInput()">Create Folder</button>
+           <label for="share-file-input" class="btn btn-primary btn-sm">Upload Files</label>
+           <input type="file" id="share-file-input" style="display:none" multiple accept="*/*" onclick="this.value=''" onchange="uploadShareFile(this.files)" />
         </div>
         <button class="btn btn-ghost btn-sm" onclick="loadSharesView()">↻ Refresh</button>
       </div>
-      
+      <div id="home-token-wrap" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
+        <span style="font-size:13px;color:var(--muted)">Your token:</span>
+        <span class="url-chip" id="home-token-value" style="word-break:break-all;max-width:100%"></span>
+        <button class="btn btn-ghost btn-sm" onclick="copyHomeToken()">Copy Token</button>
+      </div>
+
       <!-- Breadcrumb -->
       <div id="shares-breadcrumb" style="font-size:13px; font-family:monospace; color:var(--accent); margin-bottom:16px; display:none; flex-wrap:wrap; gap:6px;">
+      </div>
+      <div class="progress-wrap" id="share-upload-progress">
+        <div class="progress-bar"><div class="progress-fill" id="share-progress-fill"></div></div>
+        <div class="progress-label" id="share-progress-label">Uploading...</div>
       </div>
 
       <div class="file-grid" id="shares-list">
@@ -462,6 +436,7 @@ const API = '';              // same origin
 let CURRENT_SHARE_ID = null;
 let CURRENT_SHARE_PATH = "";
 let ALL_SHARES = [];
+let SHARE_UPLOAD_BUSY = false;
 
 
 // ── Utils ──────────────────────────────────────────────────────────────────────
@@ -511,6 +486,24 @@ async function apiFetch(path, opts={}) {
   return res.json();
 }
 
+function uploadWithProgress(url, formData, onProgress) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', url);
+    if (SESSION) xhr.setRequestHeader('Authorization', `Bearer ${SESSION.bearer}`);
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable && onProgress) onProgress(event.loaded, event.total);
+    };
+    xhr.onload = () => {
+      let data = {};
+      try { data = xhr.responseText ? JSON.parse(xhr.responseText) : {}; } catch {}
+      resolve({ ok: xhr.status >= 200 && xhr.status < 300, status: xhr.status, data });
+    };
+    xhr.onerror = () => reject(new Error('Network error during upload'));
+    xhr.send(formData);
+  });
+}
+
 // ── Session persistence ────────────────────────────────────────────────────────
 function saveSession(s) {
   SESSION = s;
@@ -532,7 +525,6 @@ function showPage(name) {
   document.querySelectorAll('.nav-btn[id^=nav-]').forEach(b => b.classList.remove('active'));
   const navBtn = $(`nav-${name}`);
   if (navBtn) navBtn.classList.add('active');
-  if (name === 'files') loadFiles();
   if (name === 'shares') { CURRENT_SHARE_ID=null; CURRENT_SHARE_PATH=""; loadSharesView(); }
   if (name === 'admin') { loadUsers(); loadAdminQR(); loadStats(); loadAdminShares(); }
 }
@@ -543,7 +535,8 @@ function enterApp() {
   $('nav-username').textContent = SESSION.username;
   $('nav-badge').textContent = SESSION.role;
   $('nav-badge').className = `badge ${SESSION.role === 'admin' ? 'badge-admin' : 'badge-user'}`;
-  showPage('files');
+  renderHomeToken();
+  showPage('shares');
 }
 
 // ── Boot ───────────────────────────────────────────────────────────────────────
@@ -558,6 +551,7 @@ async function boot() {
       SESSION = s;
       const me = await apiFetch('/api/me');
       SESSION = { ...s, ...me };
+      if (!SESSION.token && me.token) SESSION.token = me.token;
       saveSession(SESSION);
       enterApp();
       return;
@@ -651,6 +645,22 @@ function copyToken() {
   navigator.clipboard.writeText($('enroll-token-display').textContent).then(() => toast('Token copied!'));
 }
 
+function renderHomeToken() {
+  const token = SESSION?.token || '';
+  const el = $('home-token-value');
+  if (!el) return;
+  el.textContent = token || 'Not available';
+}
+
+function copyHomeToken() {
+  const token = SESSION?.token || '';
+  if (!token) {
+    toast('Token not available', 'error');
+    return;
+  }
+  navigator.clipboard.writeText(token).then(() => toast('Token copied!'));
+}
+
 // ── Files ─────────────────────────────────────────────────────────────────────
 async function loadFiles() {
   try {
@@ -689,23 +699,87 @@ function renderFiles(files) {
 function escHtml(s) { return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
 function downloadFile(id, name) {
-  const a = document.createElement('a');
-  a.href = `/api/download/${id}`;
-  a.setAttribute('download', name);
-  // inject auth via header isn't possible with <a>, so open in new tab with token via query workaround
-  // Instead use fetch + blob
-  apiFetchBlob(`/api/download/${id}`).then(blob => {
+  downloadWithProgress(`/api/download/${id}`, name).catch(e => toast(e.message, 'error'));
+}
+
+async function downloadWithProgress(path, filename) {
+  const pw = $('share-upload-progress');
+  const fill = $('share-progress-fill');
+  const label = $('share-progress-label');
+  if (pw && fill && label) {
+    pw.classList.add('show');
+    fill.style.width = '0%';
+    label.textContent = `Downloading ${filename}...`;
+  }
+
+  try {
+    const res = await fetch(API + path, { headers: { 'Authorization': `Bearer ${SESSION.bearer}` } });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: 'Download failed' }));
+      throw new Error(err.detail || 'Download failed');
+    }
+
+    const total = Number(res.headers.get('content-length') || 0);
+    const reader = res.body?.getReader ? res.body.getReader() : null;
+    const chunks = [];
+    let received = 0;
+    const startedAt = performance.now();
+
+    if (reader) {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+        received += value.length;
+
+        if (pw && fill && label) {
+          const elapsed = Math.max((performance.now() - startedAt) / 1000, 0.001);
+          const speedMbps = (received * 8) / (elapsed * 1_000_000);
+          if (total > 0) {
+            const pct = Math.min(100, Math.round((received / total) * 100));
+            fill.style.width = `${pct}%`;
+            label.textContent = `Downloading ${filename} ${fmtSize(received)} / ${fmtSize(total)} (${pct}%) @ ${speedMbps.toFixed(2)} Mbps`;
+          } else {
+            fill.style.width = '100%';
+            label.textContent = `Downloading ${filename} ${fmtSize(received)} @ ${speedMbps.toFixed(2)} Mbps`;
+          }
+        }
+      }
+    } else {
+      const blobFallback = await res.blob();
+      chunks.push(blobFallback);
+      received = blobFallback.size;
+    }
+
+    const blob = new Blob(chunks);
+    const a = document.createElement('a');
     const url = URL.createObjectURL(blob);
     a.href = url;
-    a.download = name;
+    a.download = filename;
+    a.style.display = 'none';
+    document.body.appendChild(a);
     a.click();
-    URL.revokeObjectURL(url);
-  }).catch(e => toast(e.message, 'error'));
-}
-async function apiFetchBlob(path) {
-  const res = await fetch(API + path, { headers: { 'Authorization': `Bearer ${SESSION.bearer}` } });
-  if (!res.ok) throw new Error('Download failed');
-  return res.blob();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1500);
+
+    if (pw && fill && label) {
+      fill.style.width = '100%';
+      label.textContent = `Download complete: ${filename}`;
+      setTimeout(() => {
+        pw.classList.remove('show');
+        fill.style.width = '0%';
+        label.textContent = 'Uploading...';
+      }, 1200);
+    }
+    return received;
+  } catch (e) {
+    if (pw && fill && label) {
+      pw.classList.remove('show');
+      fill.style.width = '0%';
+      label.textContent = 'Uploading...';
+    }
+    throw e;
+  }
 }
 async function deleteFile(id) {
   if (!confirm('Delete this file?')) return;
@@ -718,12 +792,14 @@ async function deleteFile(id) {
 
 // ── Upload ─────────────────────────────────────────────────────────────────────
 const dz = $('dropzone');
-dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('drag-over'); });
-dz.addEventListener('dragleave', () => dz.classList.remove('drag-over'));
-dz.addEventListener('drop', e => {
-  e.preventDefault(); dz.classList.remove('drag-over');
-  handleFileSelect(e.dataTransfer.files);
-});
+if (dz) {
+  dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('drag-over'); });
+  dz.addEventListener('dragleave', () => dz.classList.remove('drag-over'));
+  dz.addEventListener('drop', e => {
+    e.preventDefault(); dz.classList.remove('drag-over');
+    handleFileSelect(e.dataTransfer.files);
+  });
+}
 function handleFileSelect(files) {
   if (!files.length) return;
   if (!SESSION?.permissions?.upload && SESSION?.role !== 'admin') { toast('No upload permission', 'error'); return; }
@@ -862,7 +938,7 @@ function renderSharesList() {
     return;
   }
   el.innerHTML = ALL_SHARES.map(s => `
-    <div class="file-row" style="cursor:pointer" onclick="openShare('${s.id}', '${escHtml(s.name).replace(/'/g, "\'")}')">
+    <div class="file-row" style="cursor:pointer" onclick="openShare('${s.id}', '${encodeURIComponent(s.name)}')">
       <div class="file-icon">💾</div>
       <div class="file-info">
         <div class="file-name">${escHtml(s.name)}</div>
@@ -872,10 +948,10 @@ function renderSharesList() {
   `).join('');
 }
 
-function openShare(id, name) {
+function openShare(id, encodedName) {
   CURRENT_SHARE_ID = id;
   CURRENT_SHARE_PATH = "";
-  $('shares-title').textContent = name;
+  $('shares-title').textContent = decodeURIComponent(encodedName);
   loadSharesView();
 }
 
@@ -888,7 +964,7 @@ function renderBreadcrumb() {
   for (let i = 0; i < parts.length; i++) {
     accum += (accum ? "/" : "") + parts[i];
     const pathArg = accum;
-    html += ` <span>/</span> <span style="cursor:pointer; text-decoration:underline" onclick="navShareDir('${escHtml(pathArg).replace(/'/g, "\'")}')">${escHtml(parts[i])}</span>`;
+    html += ` <span>/</span> <span style="cursor:pointer; text-decoration:underline" onclick="navShareDir(decodeURIComponent('${encodeURIComponent(pathArg)}'))">${escHtml(parts[i])}</span>`;
   }
   bc.innerHTML = html;
 }
@@ -909,14 +985,15 @@ function renderShareDir(items) {
     el.innerHTML = '<div class="empty-state"><p>Folder is empty</p></div>';
     return;
   }
+  const canDelete = SESSION?.permissions?.delete || SESSION?.role === 'admin';
   el.innerHTML = items.map(item => {
     const isDir = item.type === 'dir';
     const icon = isDir ? '📁' : fileIcon(item.name);
     const sz = isDir ? 'Folder' : fmtSize(item.size);
     const subpath = CURRENT_SHARE_PATH ? CURRENT_SHARE_PATH + '/' + item.name : item.name;
-    const pathArg = subpath.replace(/'/g, "\'");
+    const encodedSubpath = encodeURIComponent(subpath);
     
-    const onClick = isDir ? `onclick="navShareDir('${escHtml(pathArg)}')" style="cursor:pointer"` : '';
+    const onClick = isDir ? `onclick="navShareDir(decodeURIComponent('${encodedSubpath}'))" style="cursor:pointer"` : '';
     
     return `
     <div class="file-row" ${onClick}>
@@ -926,31 +1003,32 @@ function renderShareDir(items) {
         <div class="file-meta">${sz} &nbsp;·&nbsp; ${fmtDate(item.modified_at)}</div>
       </div>
       <div class="file-actions">
-        ${!isDir ? `<button class="btn btn-ghost btn-sm" onclick="downloadShareFile('${CURRENT_SHARE_ID}','${escHtml(pathArg)}','${escHtml(item.name).replace(/'/g, "\'")}')">⬇ Download</button>` : ''}
+        ${!isDir ? `<button class="btn btn-ghost btn-sm" onclick="downloadShareFile('${CURRENT_SHARE_ID}','${encodedSubpath}','${encodeURIComponent(item.name)}')">⬇ Download</button>` : ''}
+        ${canDelete ? `<button class="btn btn-danger btn-sm" onclick="deleteShareItem('${CURRENT_SHARE_ID}', decodeURIComponent('${encodedSubpath}'))">✕</button>` : ''}
       </div>
     </div>`;
   }).join('');
 }
 
-function downloadShareFile(shareId, subpath, name) {
+function downloadShareFile(shareId, encodedSubpath, encodedName) {
   if (window.event) window.event.stopPropagation();
+  const subpath = decodeURIComponent(encodedSubpath);
+  const name = decodeURIComponent(encodedName);
   const url = `/api/shares/${shareId}/download?path=${encodeURIComponent(subpath)}`;
-  toast('Downloading ' + name + '...');
-  apiFetchBlob(url).then(blob => {
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = name;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-  }).catch(e => toast('Download failed: ' + e.message, 'error'));
+  downloadWithProgress(url, name).catch(e => toast('Download failed: ' + e.message, 'error'));
 }
 
-async function promptCreateShareDir() {
-  const name = prompt("Folder name:");
-  if (!name) return;
+async function createShareFolderFromInput() {
+  const input = $('share-new-folder-name');
+  const name = (input?.value || '').trim();
+  if (!name) {
+    toast('Enter a folder name', 'error');
+    return;
+  }
   try {
     await apiFetch(`/api/shares/${CURRENT_SHARE_ID}/mkdir?path=${encodeURIComponent(CURRENT_SHARE_PATH)}&name=${encodeURIComponent(name)}`, { method: 'POST' });
     toast("Folder created");
+    if (input) input.value = '';
     loadSharesView();
   } catch(e) { toast(e.message, 'error'); }
 }
@@ -966,35 +1044,87 @@ async function deleteShareItem(shareId, subpath) {
 }
 
 async function uploadShareFile(files, overwrite=false) {
-  if (!files.length) return;
-  for (let i = 0; i < files.length; i++) {
-    const f = files[i];
+  if (!files || !files.length) return;
+  if (!CURRENT_SHARE_ID) {
+    toast('Open a shared drive first', 'error');
+    return;
+  }
+  if (SHARE_UPLOAD_BUSY) {
+    toast('An upload is already in progress', 'error');
+    return;
+  }
+
+  SHARE_UPLOAD_BUSY = true;
+  const shareInput = $('share-file-input');
+  if (shareInput) shareInput.disabled = true;
+
+  const pw = $('share-upload-progress');
+  const fill = $('share-progress-fill');
+  const label = $('share-progress-label');
+  const selectedFiles = Array.from(files);
+  const totalBytes = Math.max(1, selectedFiles.reduce((sum, f) => sum + (f.size || 0), 0));
+  let completedBytes = 0;
+  pw.classList.add('show');
+
+  try {
+  for (let i = 0; i < selectedFiles.length; i++) {
+    const f = selectedFiles[i];
+    let doOverwrite = overwrite;
+    let uploadedForThisFile = 0;
+    const fileStartAt = performance.now();
+    label.textContent = `Uploading ${f.name} (${i + 1}/${selectedFiles.length})...`;
+
     try {
-      const fd = new FormData();
-      fd.append('file', f);
-      const res = await fetch(`${API}/api/shares/${CURRENT_SHARE_ID}/upload?path=${encodeURIComponent(CURRENT_SHARE_PATH)}&overwrite=${overwrite}`, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${SESSION.bearer}` },
-        body: fd,
-      });
-      if (!res.ok) {
-        if (res.status === 409) {
+      while (true) {
+        const fd = new FormData();
+        fd.append('file', f);
+        const res = await uploadWithProgress(
+          `${API}/api/shares/${CURRENT_SHARE_ID}/upload?path=${encodeURIComponent(CURRENT_SHARE_PATH)}&overwrite=${doOverwrite}`,
+          fd,
+          (loaded) => {
+            uploadedForThisFile = loaded;
+            const overall = Math.min(totalBytes, completedBytes + uploadedForThisFile);
+            const pct = Math.min(99, Math.round((overall / totalBytes) * 100));
+            const elapsed = Math.max((performance.now() - fileStartAt) / 1000, 0.001);
+            const speedMbps = (loaded * 8) / (elapsed * 1_000_000);
+            fill.style.width = `${pct}%`;
+            label.textContent = `Uploading ${f.name} (${i + 1}/${selectedFiles.length})... ${pct}% @ ${speedMbps.toFixed(2)} Mbps`;
+          }
+        );
+
+        if (res.ok) {
+          completedBytes += Math.max(uploadedForThisFile, f.size || 0);
+          fill.style.width = `${Math.min(100, Math.round((completedBytes / totalBytes) * 100))}%`;
+          toast(`Uploaded ${f.name}`);
+          break;
+        }
+
+        if (res.status === 409 && !doOverwrite) {
           if (confirm(`File "${f.name}" already exists. Replace it?`)) {
-            await uploadShareFile([f], true);
+            doOverwrite = true;
             continue;
           } else {
-            continue;
+            break;
           }
         }
-        const e = await res.json().catch(()=>({}));
-        toast(`Upload failed: ${e.detail || 'Unknown error'}`, 'error');
-        continue;
+
+        toast(`Upload failed: ${(res.data && res.data.detail) || 'Unknown error'}`, 'error');
+        break;
       }
-      toast(`Uploaded ${f.name}`);
     } catch(e) { toast(e.message, 'error'); }
   }
-  $('share-file-input').value = '';
+
+  fill.style.width = '100%';
+  label.textContent = 'Upload complete';
+  setTimeout(() => {
+    pw.classList.remove('show');
+    fill.style.width = '0%';
+  }, 1000);
   loadSharesView();
+  } finally {
+    SHARE_UPLOAD_BUSY = false;
+    if (shareInput) shareInput.disabled = false;
+  }
 }
 
 async function loadAdminShares() {
@@ -1048,3 +1178,9 @@ boot();
 </script>
 </body>
 </html>
+
+
+
+
+
+
