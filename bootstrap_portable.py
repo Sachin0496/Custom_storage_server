@@ -1,13 +1,65 @@
 import json
 import os
 import uuid
+import subprocess
+import getpass
 from datetime import datetime, timezone
 from pathlib import Path
+
+
+def _windows_take_ownership(path: Path):
+    if os.name != "nt" or not path.exists():
+        return
+    cmd = ["takeown", "/F", str(path), "/R", "/D", "Y"]
+    try:
+        subprocess.run(cmd, check=False, capture_output=True, text=True)
+    except OSError:
+        pass
+
+
+def _windows_grant_full_access(path: Path):
+    if os.name != "nt" or not path.exists():
+        return
+    user = os.getenv("USERNAME") or getpass.getuser()
+    if not user:
+        return
+    cmd = [
+        "icacls",
+        str(path),
+        "/inheritance:e",
+        "/grant",
+        f"{user}:(OI)(CI)F",
+        "Everyone:(OI)(CI)F",
+        "/T",
+        "/C",
+        "/Q",
+    ]
+    try:
+        subprocess.run(cmd, check=False, capture_output=True, text=True)
+    except OSError:
+        pass
+
+
+def _windows_clear_attributes(path: Path):
+    if os.name != "nt" or not path.exists():
+        return
+    cmd = ["attrib", "-R", "-S", "-H", str(path), "/S", "/D"]
+    try:
+        subprocess.run(cmd, check=False, capture_output=True, text=True)
+    except OSError:
+        pass
+
+
+def _ensure_portable_permissions(path: Path):
+    _windows_take_ownership(path)
+    _windows_grant_full_access(path)
+    _windows_clear_attributes(path)
 
 
 def _can_write(directory: Path) -> bool:
     try:
         directory.mkdir(parents=True, exist_ok=True)
+        _ensure_portable_permissions(directory)
         probe = directory / ".lanstore_write_test.tmp"
         probe.write_text("ok", encoding="utf-8")
         probe.unlink(missing_ok=True)
@@ -31,9 +83,10 @@ def _pick_portable_dir(root: Path) -> Path:
                 return candidate.resolve()
         except OSError:
             continue
-    # Last resort outside app directory (still beginner-friendly).
-    fallback = (home / "PortableShare").resolve()
+    # Last resort inside app root so startup never fails.
+    fallback = (root / "PortableShare").resolve()
     fallback.mkdir(parents=True, exist_ok=True)
+    _ensure_portable_permissions(fallback)
     return fallback
 
 

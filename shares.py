@@ -2,6 +2,8 @@ import json
 import uuid
 import shutil
 import stat
+import subprocess
+import getpass
 from datetime import datetime
 from pathlib import Path
 import os
@@ -15,6 +17,69 @@ def _make_writable(path_str: str):
         os.chmod(path_str, stat.S_IWRITE | stat.S_IREAD)
     except OSError:
         pass
+
+
+def _windows_grant_full_access(path: Path, recursive: bool = False):
+    """Best-effort ACL grant for current user on Windows."""
+    if os.name != "nt":
+        return
+    user = os.getenv("USERNAME") or getpass.getuser()
+    if not user:
+        return
+    if not path.exists():
+        return
+
+    # Directory permissions should propagate to children.
+    is_dir = path.is_dir()
+    user_perm = f"{user}:(OI)(CI)F" if is_dir else f"{user}:F"
+    everyone_perm = "Everyone:(OI)(CI)F" if is_dir else "Everyone:F"
+    cmd = ["icacls", str(path), "/inheritance:e", "/grant", user_perm, everyone_perm, "/C", "/Q"]
+    if recursive and path.is_dir():
+        cmd.append("/T")
+    try:
+        subprocess.run(cmd, check=False, capture_output=True, text=True)
+    except OSError:
+        pass
+
+
+def _windows_take_ownership(path: Path, recursive: bool = False):
+    """Best-effort ownership takeover to unblock permission-denied deletes."""
+    if os.name != "nt" or not path.exists():
+        return
+    cmd = ["takeown", "/F", str(path)]
+    if recursive and path.is_dir():
+        cmd.extend(["/R", "/D", "Y"])
+    try:
+        subprocess.run(cmd, check=False, capture_output=True, text=True)
+    except OSError:
+        pass
+
+
+def _windows_clear_attributes(path: Path, recursive: bool = False):
+    """Remove read-only/system/hidden attributes that can block deletes on Windows."""
+    if os.name != "nt" or not path.exists():
+        return
+    cmd = ["attrib", "-R", "-S", "-H", str(path)]
+    if recursive and path.is_dir():
+        cmd.extend(["/S", "/D"])
+    try:
+        subprocess.run(cmd, check=False, capture_output=True, text=True)
+    except OSError:
+        pass
+
+
+def _can_write_dir(path: Path) -> bool:
+    return path.exists() and path.is_dir() and os.access(path, os.W_OK)
+
+
+def _ensure_share_root_access(root: Path) -> bool:
+    """Best-effort to ensure server process can create/delete under share root."""
+    if _can_write_dir(root):
+        return True
+    _windows_take_ownership(root, recursive=True)
+    _windows_grant_full_access(root, recursive=True)
+    _windows_clear_attributes(root, recursive=True)
+    return _can_write_dir(root)
 
 
 def _rmtree_force(path: Path):
@@ -41,6 +106,9 @@ def add_share(name: str, path: str) -> dict | None:
     p = Path(path).resolve()
     if not p.exists() or not p.is_dir():
         return None  # Invalid path
+    # Ensure the server user can manage files inside this mapped drive.
+    _windows_grant_full_access(p, recursive=True)
+    _windows_clear_attributes(p, recursive=True)
     
     shares = _load()
     share_id = str(uuid.uuid4())
@@ -182,7 +250,11 @@ def create_share_dir(share_id: str, parent_subpath: str, new_dir_name: str) -> b
     if share_id not in shares:
         return "Share not found"
         
-    target = _safe_resolve_new_item(shares[share_id]["path"], parent_subpath, new_dir_name)
+    share_root = Path(shares[share_id]["path"]).resolve()
+    if not _ensure_share_root_access(share_root):
+        return "PERMISSION_DENIED"
+
+    target = _safe_resolve_new_item(str(share_root), parent_subpath, new_dir_name)
     if not target:
         return "Invalid path"
         
@@ -193,7 +265,13 @@ def create_share_dir(share_id: str, parent_subpath: str, new_dir_name: str) -> b
         target.mkdir()
         return True
     except PermissionError:
-        return "PERMISSION_DENIED"
+        _windows_take_ownership(target.parent, recursive=False)
+        _windows_grant_full_access(target.parent, recursive=False)
+        try:
+            target.mkdir()
+            return True
+        except PermissionError:
+            return "PERMISSION_DENIED"
     except OSError as e:
         return str(e)
 
@@ -204,29 +282,65 @@ def delete_share_item(share_id: str, subpath: str) -> bool | str:
     if share_id not in shares:
         return "Share not found"
         
-    target = _safe_resolve(shares[share_id]["path"], subpath)
+    share_root = Path(shares[share_id]["path"]).resolve()
+    _ensure_share_root_access(share_root)
+
+    target = _safe_resolve(str(share_root), subpath)
     if not target or not target.exists():
         return "Item not found or invalid path"
         
     # Prevent deleting the root share itself!
-    if target == Path(shares[share_id]["path"]).resolve():
+    if target == share_root:
         return "Cannot delete the root mapped drive directory"
         
     try:
         if target.is_dir():
+            _windows_clear_attributes(target, recursive=True)
             _rmtree_force(target)
         else:
             try:
+                _windows_clear_attributes(target, recursive=False)
                 target.unlink()
             except PermissionError:
                 _make_writable(str(target))
+                _windows_clear_attributes(target, recursive=False)
                 target.unlink()
         return True
     except PermissionError:
-        return "PERMISSION_DENIED"
+        _windows_take_ownership(target, recursive=target.is_dir())
+        _windows_grant_full_access(target, recursive=target.is_dir())
+        _windows_clear_attributes(target, recursive=target.is_dir())
+        _windows_grant_full_access(target.parent, recursive=False)
+        try:
+            if target.is_dir():
+                _rmtree_force(target)
+            else:
+                _make_writable(str(target))
+                _windows_clear_attributes(target, recursive=False)
+                target.unlink()
+            return True
+        except PermissionError as e2:
+            if getattr(e2, "winerror", None) == 32:
+                return "FILE_IN_USE"
+            return "PERMISSION_DENIED"
     except OSError as e:
         if getattr(e, "winerror", None) == 5:
-            return "PERMISSION_DENIED"
+            _windows_take_ownership(target, recursive=target.is_dir())
+            _windows_grant_full_access(target, recursive=target.is_dir())
+            _windows_clear_attributes(target, recursive=target.is_dir())
+            _windows_grant_full_access(target.parent, recursive=False)
+            try:
+                if target.is_dir():
+                    _rmtree_force(target)
+                else:
+                    _make_writable(str(target))
+                    _windows_clear_attributes(target, recursive=False)
+                    target.unlink()
+                return True
+            except PermissionError as e2:
+                if getattr(e2, "winerror", None) == 32:
+                    return "FILE_IN_USE"
+                return "PERMISSION_DENIED"
         if getattr(e, "winerror", None) == 32:
             return "FILE_IN_USE"
         return str(e)
@@ -238,7 +352,11 @@ def upload_share_file(share_id: str, parent_subpath: str, file_obj, filename: st
     if share_id not in shares:
         return "Share not found"
         
-    target = _safe_resolve_new_item(shares[share_id]["path"], parent_subpath, filename)
+    share_root = Path(shares[share_id]["path"]).resolve()
+    if not _ensure_share_root_access(share_root):
+        return "PERMISSION_DENIED"
+
+    target = _safe_resolve_new_item(str(share_root), parent_subpath, filename)
     if not target:
         return "Invalid path"
         
@@ -250,7 +368,22 @@ def upload_share_file(share_id: str, parent_subpath: str, file_obj, filename: st
             shutil.copyfileobj(file_obj.file, out, length=COPY_BUFFER_SIZE)
         return True
     except PermissionError:
-        return "PERMISSION_DENIED"
+        _windows_take_ownership(target.parent, recursive=False)
+        _windows_grant_full_access(target.parent, recursive=False)
+        _windows_clear_attributes(target.parent, recursive=False)
+        if target.exists():
+            _windows_take_ownership(target, recursive=False)
+            _windows_grant_full_access(target, recursive=False)
+            _windows_clear_attributes(target, recursive=False)
+            _make_writable(str(target))
+        try:
+            with open(target, "wb") as out:
+                shutil.copyfileobj(file_obj.file, out, length=COPY_BUFFER_SIZE)
+            return True
+        except PermissionError as e2:
+            if getattr(e2, "winerror", None) == 32:
+                return "FILE_IN_USE"
+            return "PERMISSION_DENIED"
     except OSError as e:
         return str(e)
 

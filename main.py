@@ -6,10 +6,11 @@ import socket
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
+from urllib.parse import quote
 
 import qrcode
-from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Header, Request
-from fastapi.responses import FileResponse, JSONResponse, HTMLResponse, Response
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Header, Request, Query
+from fastapi.responses import FileResponse, JSONResponse, HTMLResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -26,6 +27,7 @@ with open("config.json") as f:
 PORT = CONFIG.get("port", 8080)
 STORAGE_PATH = Path(CONFIG.get("storage_path", "./storage"))
 APP_NAME = CONFIG.get("app_name", "LAN Store")
+DOWNLOAD_CHUNK_SIZE = 4 * 1024 * 1024  # 4 MiB chunks for faster LAN transfers
 
 # ── App ────────────────────────────────────────────────────────────────────────
 
@@ -55,22 +57,60 @@ STORAGE_PATH.mkdir(parents=True, exist_ok=True)
 
 
 # ── Auth helpers ───────────────────────────────────────────────────────────────
-def _parse_token(authorization: Optional[str] = Header(None)) -> tuple[str, str]:
-    if not authorization or not authorization.startswith("Bearer "):
+def _parse_token(
+    authorization: Optional[str] = Header(None),
+    auth_q: Optional[str] = Query(None, alias="auth"),
+) -> tuple[str, str]:
+    token_blob = None
+    if authorization and authorization.startswith("Bearer "):
+        token_blob = authorization.split(" ", 1)[1]
+    elif auth_q:
+        token_blob = auth_q
+
+    if not token_blob:
         raise HTTPException(status_code=401, detail="Missing or invalid token")
-    parts = authorization.split(" ", 1)[1].split(":", 1)
+
+    parts = token_blob.split(":", 1)
     if len(parts) != 2:
         raise HTTPException(status_code=401, detail="Token format: username:token")
     return parts[0], parts[1]
 
 
-def _require_user(authorization: Optional[str] = Header(None)) -> dict:
-    username, token = _parse_token(authorization)
+def _require_user(
+    authorization: Optional[str] = Header(None),
+    auth_q: Optional[str] = Query(None, alias="auth"),
+) -> dict:
+    username, token = _parse_token(authorization, auth_q)
     user = auth.authenticate(username, token)
     if not user:
         raise HTTPException(status_code=401, detail="Invalid credentials")
     user["token"] = token
     return user
+
+
+def _iter_file_chunks(path: Path, chunk_size: int = DOWNLOAD_CHUNK_SIZE):
+    with path.open("rb") as f:
+        while True:
+            chunk = f.read(chunk_size)
+            if not chunk:
+                break
+            yield chunk
+
+
+def _stream_download(path: Path, original_name: str) -> StreamingResponse:
+    size = path.stat().st_size
+    quoted_name = quote(original_name)
+    disposition = f"attachment; filename*=UTF-8''{quoted_name}"
+    return StreamingResponse(
+        _iter_file_chunks(path),
+        media_type="application/octet-stream",
+        headers={
+            "Content-Disposition": disposition,
+            "Content-Length": str(size),
+            "Accept-Ranges": "bytes",
+            "Cache-Control": "no-store",
+        },
+    )
 
 
 def _require_admin(authorization: Optional[str] = Header(None)) -> dict:
@@ -182,11 +222,7 @@ def download_file(file_id: str, user: dict = Depends(_require_user)):
     if not result:
         raise HTTPException(status_code=404, detail="File not found")
     path, original_name = result
-    return FileResponse(
-        path=str(path),
-        filename=original_name,
-        media_type="application/octet-stream",
-    )
+    return _stream_download(path, original_name)
 
 
 @app.delete("/api/files/{file_id}")
@@ -230,11 +266,7 @@ def download_share_file(share_id: str, path: str, user: dict = Depends(_require_
         raise HTTPException(status_code=404, detail="File not found or access denied")
     
     file_path, original_name = result
-    return FileResponse(
-        path=str(file_path),
-        filename=original_name,
-        media_type="application/octet-stream",
-    )
+    return _stream_download(file_path, original_name)
 
 
 @app.post("/api/shares/{share_id}/mkdir")
@@ -243,7 +275,7 @@ def create_share_folder(share_id: str, path: str, name: str, user: dict = Depend
         raise HTTPException(status_code=403, detail="No upload permission")
     result = shares.create_share_dir(share_id, path, name)
     if result == "PERMISSION_DENIED":
-        raise HTTPException(status_code=403, detail="Server has no write access to this drive path")
+        raise HTTPException(status_code=403, detail="Server has no write access to this drive path. Start with start.bat (Run as Administrator) or remap to a writable folder.")
     if result is not True:
         raise HTTPException(status_code=400, detail=result)
     return {"ok": True}
@@ -255,7 +287,7 @@ def delete_share_item(share_id: str, path: str, user: dict = Depends(_require_us
         raise HTTPException(status_code=403, detail="No delete permission")
     result = shares.delete_share_item(share_id, path)
     if result == "PERMISSION_DENIED":
-        raise HTTPException(status_code=403, detail="Server has no delete access for this item")
+        raise HTTPException(status_code=403, detail="Server has no delete access for this item. Start with start.bat (Run as Administrator) so ACL/ownership can be fixed.")
     if result == "FILE_IN_USE":
         raise HTTPException(status_code=409, detail="Item is in use by another process")
     if result is not True:
@@ -277,8 +309,10 @@ async def upload_share_file(
     result = shares.upload_share_file(share_id, path, file, file.filename, overwrite)
     if result == "FILE_EXISTS":
         raise HTTPException(status_code=409, detail="File already exists")
+    elif result == "FILE_IN_USE":
+        raise HTTPException(status_code=409, detail="Target file is currently in use")
     elif result == "PERMISSION_DENIED":
-        raise HTTPException(status_code=403, detail="Server has no write access to this drive path")
+        raise HTTPException(status_code=403, detail="Server has no write access to this drive path. Start with start.bat (Run as Administrator) or remap to a writable folder.")
     elif result is not True:
         raise HTTPException(status_code=400, detail=result)
     return {"ok": True}

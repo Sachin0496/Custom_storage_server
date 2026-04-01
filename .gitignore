@@ -13,6 +13,8 @@ files.json
 users.json
 shares.json
 storage/
+PortableShare/
+tmp_share_test/
 
 # OS/editor files
 .DS_Store

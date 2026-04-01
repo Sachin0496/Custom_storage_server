@@ -2,6 +2,15 @@
 cd /d "%~dp0"
 title LAN Store
 
+:: Request elevation once so server can manage ACL/ownership in mapped drives.
+net session >nul 2>&1
+if errorlevel 1 (
+  echo.
+  echo   Requesting Administrator permissions for full file access...
+  powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -FilePath '%~f0' -Verb RunAs"
+  exit /b
+)
+
 echo.
 echo   LAN Store - Starting...
 echo.
