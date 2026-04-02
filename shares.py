@@ -4,8 +4,9 @@ import shutil
 import stat
 import subprocess
 import getpass
+import zipfile
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import os
 
 SHARES_FILE = Path("shares.json")
@@ -244,6 +245,19 @@ def get_share_file(share_id: str, subpath: str) -> tuple[Path, str] | None:
     return target, target.name
 
 
+def get_share_dir(share_id: str, subpath: str) -> tuple[Path, str] | None:
+    shares = _load()
+    if share_id not in shares:
+        return None
+    share = shares[share_id]
+    target = _safe_resolve(share["path"], subpath)
+    if not target or not target.exists() or not target.is_dir():
+        return None
+
+    folder_name = target.name or share.get("name", "folder")
+    return target, folder_name
+
+
 def create_share_dir(share_id: str, parent_subpath: str, new_dir_name: str) -> bool | str:
     """Returns True if created, string error message if failed."""
     shares = _load()
@@ -385,5 +399,94 @@ def upload_share_file(share_id: str, parent_subpath: str, file_obj, filename: st
                 return "FILE_IN_USE"
             return "PERMISSION_DENIED"
     except OSError as e:
+        return str(e)
+
+
+def _normalize_zip_member_name(relpath: str, fallback_name: str) -> str | None:
+    candidate = (relpath or fallback_name or "file").replace("\\", "/").strip("/")
+    if not candidate:
+        candidate = fallback_name or "file"
+
+    pure = PurePosixPath(candidate)
+    parts = []
+    for part in pure.parts:
+        if part in ("", "."):
+            continue
+        if part == "..":
+            return None
+        parts.append(part.replace(":", "_"))
+    if not parts:
+        return None
+    return "/".join(parts)
+
+
+def _safe_zip_filename(folder_name: str) -> str:
+    name = (folder_name or "folder").strip().replace("\\", "_").replace("/", "_")
+    if not name:
+        name = "folder"
+    if not name.lower().endswith(".zip"):
+        name += ".zip"
+    return name
+
+
+def upload_share_folder_zip(
+    share_id: str,
+    parent_subpath: str,
+    folder_name: str,
+    files: list,
+    relpaths: list[str],
+    overwrite: bool,
+) -> bool | str:
+    """Uploads many files as one zip archive into the share folder."""
+    shares = _load()
+    if share_id not in shares:
+        return "Share not found"
+    if not files:
+        return "No files provided"
+    if len(files) != len(relpaths):
+        return "Invalid upload payload"
+
+    share_root = Path(shares[share_id]["path"]).resolve()
+    if not _ensure_share_root_access(share_root):
+        return "PERMISSION_DENIED"
+
+    zip_name = _safe_zip_filename(folder_name)
+    target = _safe_resolve_new_item(str(share_root), parent_subpath, zip_name)
+    if not target:
+        return "Invalid path"
+    if target.exists() and not overwrite:
+        return "FILE_EXISTS"
+
+    def _write_zip():
+        with zipfile.ZipFile(target, "w", compression=zipfile.ZIP_STORED, allowZip64=True) as zf:
+            for fobj, rel in zip(files, relpaths):
+                arcname = _normalize_zip_member_name(rel, getattr(fobj, "filename", "file"))
+                if not arcname:
+                    continue
+                with zf.open(arcname, "w") as out:
+                    shutil.copyfileobj(fobj.file, out, length=COPY_BUFFER_SIZE)
+
+    try:
+        _write_zip()
+        return True
+    except PermissionError:
+        _windows_take_ownership(target.parent, recursive=False)
+        _windows_grant_full_access(target.parent, recursive=False)
+        _windows_clear_attributes(target.parent, recursive=False)
+        if target.exists():
+            _windows_take_ownership(target, recursive=False)
+            _windows_grant_full_access(target, recursive=False)
+            _windows_clear_attributes(target, recursive=False)
+            _make_writable(str(target))
+        try:
+            _write_zip()
+            return True
+        except PermissionError as e2:
+            if getattr(e2, "winerror", None) == 32:
+                return "FILE_IN_USE"
+            return "PERMISSION_DENIED"
+    except OSError as e:
+        if getattr(e, "winerror", None) == 32:
+            return "FILE_IN_USE"
         return str(e)
 

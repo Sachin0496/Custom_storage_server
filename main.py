@@ -3,13 +3,15 @@ import os
 import base64
 import io
 import socket
+import tempfile
+import zipfile
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
 from urllib.parse import quote
 
 import qrcode
-from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Header, Request, Query
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, Header, Request, Query, BackgroundTasks
 from fastapi.responses import FileResponse, JSONResponse, HTMLResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
@@ -111,6 +113,30 @@ def _stream_download(path: Path, original_name: str) -> StreamingResponse:
             "Cache-Control": "no-store",
         },
     )
+
+
+def _zip_dir_to_temp(source_dir: Path) -> Path:
+    fd, tmp_path = tempfile.mkstemp(prefix="lanshare_", suffix=".zip")
+    os.close(fd)
+    out = Path(tmp_path)
+    with zipfile.ZipFile(out, "w", compression=zipfile.ZIP_STORED, allowZip64=True) as zf:
+        for p in source_dir.rglob("*"):
+            try:
+                if not p.is_file():
+                    continue
+                arcname = p.relative_to(source_dir).as_posix()
+                if arcname:
+                    zf.write(p, arcname)
+            except OSError:
+                continue
+    return out
+
+
+def _cleanup_temp_file(path_str: str):
+    try:
+        Path(path_str).unlink(missing_ok=True)
+    except OSError:
+        pass
 
 
 def _require_admin(authorization: Optional[str] = Header(None)) -> dict:
@@ -269,6 +295,39 @@ def download_share_file(share_id: str, path: str, user: dict = Depends(_require_
     return _stream_download(file_path, original_name)
 
 
+@app.get("/api/shares/{share_id}/download-folder")
+def download_share_folder(
+    share_id: str,
+    path: str = "",
+    bg: BackgroundTasks = None,
+    user: dict = Depends(_require_user),
+):
+    if not user["permissions"].get("download"):
+        raise HTTPException(status_code=403, detail="No download permission")
+    result = shares.get_share_dir(share_id, path)
+    if not result:
+        raise HTTPException(status_code=404, detail="Folder not found or access denied")
+
+    folder_path, folder_name = result
+    try:
+        zip_path = _zip_dir_to_temp(folder_path)
+    except PermissionError:
+        raise HTTPException(status_code=403, detail="Server cannot read this folder")
+    except OSError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    download_name = folder_name if folder_name.lower().endswith(".zip") else f"{folder_name}.zip"
+    if bg is None:
+        bg = BackgroundTasks()
+    bg.add_task(_cleanup_temp_file, str(zip_path))
+    return FileResponse(
+        path=str(zip_path),
+        filename=download_name,
+        media_type="application/zip",
+        background=bg,
+    )
+
+
 @app.post("/api/shares/{share_id}/mkdir")
 def create_share_folder(share_id: str, path: str, name: str, user: dict = Depends(_require_user)):
     if not user["permissions"].get("upload"):
@@ -309,6 +368,38 @@ async def upload_share_file(
     result = shares.upload_share_file(share_id, path, file, file.filename, overwrite)
     if result == "FILE_EXISTS":
         raise HTTPException(status_code=409, detail="File already exists")
+    elif result == "FILE_IN_USE":
+        raise HTTPException(status_code=409, detail="Target file is currently in use")
+    elif result == "PERMISSION_DENIED":
+        raise HTTPException(status_code=403, detail="Server has no write access to this drive path. Start with start.bat (Run as Administrator) or remap to a writable folder.")
+    elif result is not True:
+        raise HTTPException(status_code=400, detail=result)
+    return {"ok": True}
+
+
+@app.post("/api/shares/{share_id}/upload-folder-zip")
+async def upload_share_folder_zip(
+    share_id: str,
+    path: str = "",
+    overwrite: bool = False,
+    folder_name: str = Form(...),
+    relpaths: list[str] = Form(...),
+    files: list[UploadFile] = File(...),
+    user: dict = Depends(_require_user),
+):
+    if not user["permissions"].get("upload"):
+        raise HTTPException(status_code=403, detail="No upload permission")
+
+    result = shares.upload_share_folder_zip(
+        share_id=share_id,
+        parent_subpath=path,
+        folder_name=folder_name,
+        files=files,
+        relpaths=relpaths,
+        overwrite=overwrite,
+    )
+    if result == "FILE_EXISTS":
+        raise HTTPException(status_code=409, detail="Archive already exists")
     elif result == "FILE_IN_USE":
         raise HTTPException(status_code=409, detail="Target file is currently in use")
     elif result == "PERMISSION_DENIED":

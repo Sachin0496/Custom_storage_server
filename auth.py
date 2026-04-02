@@ -163,8 +163,10 @@ def get_all_users() -> list:
 
 def update_user(username: str, data: dict) -> bool:
     users = _load()
-    if username not in users:
+    stored_key = _find_user_key(users, username)
+    if not stored_key:
         return False
+    username = stored_key
     if "permissions" in data:
         users[username]["permissions"].update(data["permissions"])
     if "role" in data:
@@ -179,8 +181,10 @@ def update_user(username: str, data: dict) -> bool:
 
 def remove_user(username: str) -> bool:
     users = _load()
-    if username not in users:
+    stored_key = _find_user_key(users, username)
+    if not stored_key:
         return False
+    username = stored_key
     del users[username]
     _save(users)
     return True
@@ -188,7 +192,8 @@ def remove_user(username: str) -> bool:
 
 def get_user(username: str) -> dict | None:
     users = _load()
-    u = users.get(username)
+    stored_key = _find_user_key(users, username)
+    u = users.get(stored_key) if stored_key else None
     if u:
         return {**u, "username": username}
     return None

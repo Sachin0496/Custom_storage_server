@@ -8,21 +8,9 @@
       "delete": true
     },
     "enrolled_at": "2026-04-01T14:27:22.799902",
-    "last_seen": "2026-04-01T15:19:58.701210",
+    "last_seen": "2026-04-02T14:24:50.335387",
     "host_id": "pranesh",
     "token": "2sTCmDQ4o9O61_BhyMfB-A6_n2NOb4tCmZINHXiWdzI"
-  },
-  "Sachin": {
-    "token_hash": "415d2b04f7d57cde809b9706b70e45bd1879e5d83ee05c112dd0833bf1345c18",
-    "role": "user",
-    "permissions": {
-      "upload": true,
-      "download": true,
-      "delete": true
-    },
-    "enrolled_at": "2026-04-01T14:27:43.320601",
-    "last_seen": "2026-04-01T14:36:46.631311",
-    "token": null
   },
   "sachin]": {
     "token_hash": "412b0eb9fde0c078663d4fd89898fabcb2fc074511d71a4b90ec995c4cf168c0",
@@ -33,7 +21,19 @@
       "delete": true
     },
     "enrolled_at": "2026-04-01T14:31:36.667522",
-    "last_seen": "2026-04-01T15:20:18.159745",
+    "last_seen": "2026-04-02T14:10:42.478506",
     "token": "XO9H6Zx1bsF4ZmWPBB6Tbame8UcYgpW8WKlqnoOzjsA"
+  },
+  "Sachin": {
+    "token": "NaNkZrc5bIXiq5qcM7zhNvTyB5gYfQ6aF5qXM5jgkoo",
+    "token_hash": "7c425f538555d00bd853465fdbf90fe08be576f944e9b750b44fee68a032db79",
+    "role": "user",
+    "permissions": {
+      "upload": true,
+      "download": true,
+      "delete": true
+    },
+    "enrolled_at": "2026-04-02T14:15:46.081174",
+    "last_seen": "2026-04-02T14:24:31.670343"
   }
 }

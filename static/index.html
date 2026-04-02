@@ -344,11 +344,14 @@
     <div class="card">
       <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
         <div style="font-size:16px;font-weight:600;flex:1" id="shares-title">Shared Drives</div>
+        <button id="share-back-btn" class="btn btn-ghost btn-sm" style="display:none" onclick="goShareBack()">← Back</button>
         <div id="shares-actions" style="display:none; gap:8px;">
            <input type="text" id="share-new-folder-name" placeholder="New folder name" style="max-width:180px" />
            <button class="btn btn-primary btn-sm" onclick="createShareFolderFromInput()">Create Folder</button>
            <label for="share-file-input" class="btn btn-primary btn-sm">Upload Files</label>
            <input type="file" id="share-file-input" style="display:none" multiple accept="*/*" onclick="this.value=''" onchange="uploadShareFile(this.files)" />
+           <label for="share-folder-input" class="btn btn-ghost btn-sm">Upload Folder (Auto Zip)</label>
+           <input type="file" id="share-folder-input" style="display:none" webkitdirectory directory multiple onclick="this.value=''" onchange="uploadShareFolderAsZip(this.files)" />
         </div>
         <button class="btn btn-ghost btn-sm" onclick="loadSharesView()">↻ Refresh</button>
       </div>
@@ -543,6 +546,25 @@ function enterApp() {
   $('nav-badge').className = `badge ${SESSION.role === 'admin' ? 'badge-admin' : 'badge-user'}`;
   renderHomeToken();
   showPage('shares');
+}
+
+async function syncSessionFromServer() {
+  if (!SESSION?.bearer) return;
+  try {
+    const me = await apiFetch('/api/me');
+    SESSION = {
+      ...SESSION,
+      ...me,
+      bearer: SESSION.bearer,
+      token: SESSION.token || me.token || ''
+    };
+    saveSession(SESSION);
+    if ($('nav-badge')) {
+      $('nav-badge').textContent = SESSION.role;
+      $('nav-badge').className = `badge ${SESSION.role === 'admin' ? 'badge-admin' : 'badge-user'}`;
+    }
+    if ($('nav-admin')) $('nav-admin').style.display = SESSION?.role === 'admin' ? 'inline-flex' : 'none';
+  } catch {}
 }
 
 // ── Boot ───────────────────────────────────────────────────────────────────────
@@ -950,11 +972,14 @@ async function loadStats() {
 
 // ── Shares ────────────────────────────────────────────────────────────────────
 async function loadSharesView() {
+  await syncSessionFromServer();
+  const backBtn = $('share-back-btn');
   if (!CURRENT_SHARE_ID) {
     // Load list of shares
     $('shares-breadcrumb').style.display = 'none';
     $('shares-actions').style.display = 'none';
     $('shares-title').textContent = 'Shared Drives';
+    if (backBtn) backBtn.style.display = 'none';
     try {
       ALL_SHARES = await apiFetch('/api/shares');
       renderSharesList();
@@ -962,6 +987,7 @@ async function loadSharesView() {
   } else {
     // Load directory
     $('shares-actions').style.display = (SESSION?.permissions?.upload || SESSION?.role === 'admin') ? 'flex' : 'none';
+    if (backBtn) backBtn.style.display = 'inline-flex';
     try {
       const items = await apiFetch(`/api/shares/${CURRENT_SHARE_ID}/browse?path=${encodeURIComponent(CURRENT_SHARE_PATH)}`);
       renderShareDir(items);
@@ -974,6 +1000,20 @@ async function loadSharesView() {
       loadSharesView();
     }
   }
+}
+
+function goShareBack() {
+  if (!CURRENT_SHARE_ID) return;
+  if (!CURRENT_SHARE_PATH) {
+    CURRENT_SHARE_ID = null;
+    CURRENT_SHARE_PATH = "";
+    loadSharesView();
+    return;
+  }
+  const parts = CURRENT_SHARE_PATH.split('/').filter(Boolean);
+  parts.pop();
+  CURRENT_SHARE_PATH = parts.join('/');
+  loadSharesView();
 }
 
 function renderSharesList() {
@@ -1049,10 +1089,19 @@ function renderShareDir(items) {
       </div>
       <div class="file-actions">
         ${!isDir ? `<button class="btn btn-ghost btn-sm" onclick="downloadShareFile('${CURRENT_SHARE_ID}','${encodedSubpath}','${encodeURIComponent(item.name)}', ${item.size || 0})">⬇ Download</button>` : ''}
+        ${isDir ? `<button class="btn btn-ghost btn-sm" onclick="downloadShareFolder('${CURRENT_SHARE_ID}','${encodedSubpath}','${encodeURIComponent(item.name)}')">Zip Download</button>` : ''}
         ${canDelete ? `<button class="btn btn-danger btn-sm" onclick="deleteShareItem('${CURRENT_SHARE_ID}', decodeURIComponent('${encodedSubpath}'))">✕</button>` : ''}
       </div>
     </div>`;
   }).join('');
+}
+
+function downloadShareFolder(shareId, encodedSubpath, encodedName) {
+  if (window.event) window.event.stopPropagation();
+  const subpath = decodeURIComponent(encodedSubpath);
+  const name = decodeURIComponent(encodedName) || 'folder';
+  const url = `/api/shares/${shareId}/download-folder?path=${encodeURIComponent(subpath)}`;
+  downloadWithProgress(url, `${name}.zip`, 0).catch(e => toast('Folder download failed: ' + e.message, 'error'));
 }
 
 function downloadShareFile(shareId, encodedSubpath, encodedName, size=0) {
@@ -1169,6 +1218,97 @@ async function uploadShareFile(files, overwrite=false) {
   } finally {
     SHARE_UPLOAD_BUSY = false;
     if (shareInput) shareInput.disabled = false;
+  }
+}
+
+async function uploadShareFolderAsZip(files, overwrite=false) {
+  if (!files || !files.length) return;
+  if (!CURRENT_SHARE_ID) {
+    toast('Open a shared drive first', 'error');
+    return;
+  }
+  if (SHARE_UPLOAD_BUSY) {
+    toast('An upload is already in progress', 'error');
+    return;
+  }
+
+  const list = Array.from(files).filter(Boolean);
+  if (!list.length) return;
+  const firstRel = list[0].webkitRelativePath || list[0].name || 'folder';
+  const folderName = (firstRel.split('/')[0] || 'folder').trim() || 'folder';
+
+  SHARE_UPLOAD_BUSY = true;
+  const shareInput = $('share-file-input');
+  const folderInput = $('share-folder-input');
+  if (shareInput) shareInput.disabled = true;
+  if (folderInput) folderInput.disabled = true;
+
+  const pw = $('share-upload-progress');
+  const fill = $('share-progress-fill');
+  const label = $('share-progress-label');
+  pw.classList.add('show');
+  fill.style.width = '0%';
+  label.textContent = `Preparing ${folderName}.zip ...`;
+
+  try {
+    let doOverwrite = overwrite;
+    while (true) {
+      const fd = new FormData();
+      fd.append('folder_name', folderName);
+      for (const f of list) {
+        const rel = (f.webkitRelativePath || f.name || 'file').replace(/\\/g, '/');
+        const relParts = rel.split('/').filter(Boolean);
+        const relNoRoot = relParts.length > 1 ? relParts.slice(1).join('/') : (f.name || rel);
+        fd.append('files', f, f.name);
+        fd.append('relpaths', relNoRoot || (f.name || 'file'));
+      }
+
+      const startedAt = performance.now();
+      const res = await uploadWithProgress(
+        `${API}/api/shares/${CURRENT_SHARE_ID}/upload-folder-zip?path=${encodeURIComponent(CURRENT_SHARE_PATH)}&overwrite=${doOverwrite}`,
+        fd,
+        (loaded, total) => {
+          const totalBytes = Math.max(total || 0, 1);
+          const pct = Math.min(99, Math.round((loaded / totalBytes) * 100));
+          const elapsed = Math.max((performance.now() - startedAt) / 1000, 0.001);
+          const speedMbps = (loaded * 8) / (elapsed * 1_000_000);
+          fill.style.width = `${pct}%`;
+          label.textContent = `Uploading ${folderName}.zip ... ${pct}% @ ${speedMbps.toFixed(2)} Mbps`;
+        }
+      );
+
+      if (res.ok) {
+        fill.style.width = '100%';
+        label.textContent = `Upload complete: ${folderName}.zip`;
+        toast(`Uploaded ${folderName}.zip`);
+        setTimeout(() => {
+          pw.classList.remove('show');
+          fill.style.width = '0%';
+        }, 1000);
+        loadSharesView();
+        break;
+      }
+
+      if (res.status === 409 && !doOverwrite) {
+        if (confirm(`"${folderName}.zip" already exists. Replace it?`)) {
+          doOverwrite = true;
+          continue;
+        }
+      }
+
+      toast(`Upload failed: ${(res.data && res.data.detail) || 'Unknown error'}`, 'error');
+      pw.classList.remove('show');
+      fill.style.width = '0%';
+      break;
+    }
+  } catch (e) {
+    toast(e.message || 'Folder upload failed', 'error');
+    pw.classList.remove('show');
+    fill.style.width = '0%';
+  } finally {
+    SHARE_UPLOAD_BUSY = false;
+    if (shareInput) shareInput.disabled = false;
+    if (folderInput) folderInput.disabled = false;
   }
 }
 

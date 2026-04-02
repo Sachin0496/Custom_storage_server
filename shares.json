@@ -4,5 +4,11 @@
     "name": "Portable (Writable)",
     "path": "C:\\Projects\\file_server\\PortableShare",
     "created_at": "2026-04-01T13:35:37.033775"
+  },
+  "202bf5ed-646a-4746-8284-a9afb7541205": {
+    "id": "202bf5ed-646a-4746-8284-a9afb7541205",
+    "name": "ziptest",
+    "path": "C:\\Projects\\file_server\\Custom_storage_server\\zip_test_share",
+    "created_at": "now"
   }
 }
